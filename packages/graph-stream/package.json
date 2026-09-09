@@ -1,0 +1,46 @@
+{
+  "name": "@hy-sde-org/dsh-graph-stream",
+  "description": "Agent Graph stream layer: pure derivations (records, trace, readiness, handoff, schedule reconcile) and the process-local coordinator (Maka port, slice P2)",
+  "version": "0.1.2-rc.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/graph/graph-stream"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@hy-sde-org/dsh-graph-control": "workspace:^"
+  },
+  "devDependencies": {
+    "@hy-sde-org/dsh-graph-control": "workspace:*",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.0.1-rc.1"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "pnpm run clean && pnpm run build"
+  }
+}

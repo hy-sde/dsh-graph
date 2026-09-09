@@ -1,0 +1,49 @@
+{
+  "name": "@hy-sde-org/dsh-graph-executor",
+  "description": "Operator executor adapter for the Agent Graph: deterministic worktree leases, durable operator bindings, and child-run serialization with terminal record emission (Maka port, slice P3)",
+  "version": "0.1.2-rc.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/graph/graph-executor"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@hy-sde-org/dsh-graph-control": "workspace:^",
+    "@hy-sde-org/dsh-graph-stream": "workspace:^"
+  },
+  "devDependencies": {
+    "@hy-sde-org/dsh-graph-control": "workspace:*",
+    "@hy-sde-org/dsh-graph-stream": "workspace:*",
+    "@deepseek-ai/dsh-storage": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.0.1-rc.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "pnpm run clean && pnpm run build"
+  }
+}
