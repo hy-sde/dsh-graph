@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-graph-stream",
   "description": "Agent Graph stream layer: pure derivations (records, trace, readiness, handoff, schedule reconcile) and the process-local coordinator (Maka port, slice P2)",
-  "version": "0.1.2-rc.1",
+  "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },

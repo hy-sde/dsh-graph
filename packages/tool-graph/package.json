@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-tool-graph",
   "description": "Agent Graph supervisor tools: view_agent_graph, update_agent_graph, yield_agent_graph over a host-provided graph controller, with the orchestration:graph prompt section (Maka port, slice P4)",
-  "version": "0.1.2-rc.1",
+  "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },
@@ -36,26 +36,26 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-agent": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-agent": "^0.1.5-rc.1",
     "@hy-sde-org/dsh-graph-control": "workspace:^",
     "@hy-sde-org/dsh-graph-stream": "workspace:^",
-    "@deepseek-ai/dsh-session-projection": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.1.2-rc.1"
+    "@deepseek-ai/dsh-session-projection": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-agent": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-agent": "^0.1.5-rc.1",
     "@hy-sde-org/dsh-graph-control": "workspace:*",
     "@hy-sde-org/dsh-graph-stream": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-storage": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-projection": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-storage": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-storage-sqlite": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-brand": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-session": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-brand": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-session": "^0.1.5-rc.1",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"

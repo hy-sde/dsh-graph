@@ -1,6 +1,6 @@
 {
   "name": "dsh-graph",
-  "version": "0.1.2-rc.1",
+  "version": "0.1.5-rc.1",
   "private": true,
   "description": "Standalone port of the Maka Agent Graph family (control store, stream core, executor, supervisor tools, wakes, projection, host) for the DeepSeek Harness — durable dependency scheduling with exactly-once claims and supervisor yield/wake.",
   "type": "module",
