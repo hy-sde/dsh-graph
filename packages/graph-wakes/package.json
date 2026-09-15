@@ -1,18 +1,18 @@
 {
   "name": "@hy-sde-org/dsh-graph-wakes",
-  "description": "Agent Graph supervisor wake delivery: idle-gated host runtime over the durable wake rows (Maka port, slice P5)",
+  "description": "Agent Graph supervisor wake delivery: idle-gated host runtime over the durable wake rows.",
   "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/graph/graph-wakes"
+    "url": "git+https://github.com/hy-sde/dsh-plugins.git",
+    "directory": "dsh-graph/packages/graph-wakes"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

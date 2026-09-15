@@ -1,21 +1,16 @@
----
-description: "Derived stream layer for the Agent Graph: deterministic identities, record/trace/readiness/schedule projections, handoffs, and the process-local reconciliation coordinator."
-kind: "package-reference"
----
-
 # @hy-sde-org/dsh-graph-stream
 
 English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-graph-stream` is the derivation layer of the Agent Graph (Maka port, slice P2). It layers on top of `@hy-sde-org/dsh-graph-control` (the durable decision store, P1) and owns **everything that can be recomputed from committed rows**: work-status projection, record folding, trace/route derivation, readiness intents, input handoffs, and the single-flight reconciliation driver (`AgentGraphCoordinator`) that walks Maka's authored drive loop (provision → supervise → select → render → execute) against that store.
+`dsh-graph-stream` is the derivation layer of the Agent Graph. It layers on top of `@hy-sde-org/dsh-graph-control` (the durable decision store) and owns **everything that can be recomputed from committed rows**: work-status projection, record folding, trace/route derivation, readiness intents, input handoffs, and the single-flight reconciliation driver (`AgentGraphCoordinator`) that walks Maka's authored drive loop (provision → supervise → select → render → execute) against that store.
 
 The split follows Maka's one hard rule: the store is the authority, the stream layer never writes anything except through the store's own commit/claim/provision methods. Every projection here is deterministic and pure — recomputing it never starts work; admission and execution are store-sealed (claim with preallocated turn/run identity at the schedule revision it observed).
 
 Ids are deterministic sha256 cut to 32 hex chars (`graph_intent_…`, `graph_operator_…`, `graph_edge_…`, `graph_route_…`, `graph_record_…`, `graph_claim_…`), so replays are idempotent by construction. Identity comparison uses UTF-16 code-unit order (`compareAgentGraphIdentity`), not locale comparison.
 
-This package contributes no tool, prompt, or plugin row — the executor adapter (P3) and supervisor tools (P4) consume it.
+This package contributes no tool, prompt, or plugin row — the executor adapter and the supervisor tools consume it.
 
 ## Table of Contents
 
@@ -77,11 +72,11 @@ export interface AgentGraphExecutor {
 }
 ```
 
-The coordinator never calls a provider directly — P3 supplies the subagent/worktree-backed implementation.
+The coordinator never calls a provider directly — the executor package supplies the subagent/worktree-backed implementation.
 
 ## Further Exploration
 
-- `packages/graph/graph-control` (P1): the durable rows this layer folds.
+- [`@hy-sde-org/dsh-graph-control`](../graph-control/README.md): the durable rows this layer folds.
 - `src/reconcile.ts` / `src/coordinator.ts`: the drive loop and status derivation.
 - `src/hash.ts` / `src/identity.ts`: the canonicalization and ordering primitives every id and fingerprint depends on.
 - `tests/graph-stream.spec.ts` / `tests/reconcile.spec.ts`: projection, validation, handoff, and end-to-end drive scenarios against a real sqlite-backed store.
@@ -92,8 +87,8 @@ The package is pure TypeScript with narrow, single-responsibility modules and no
 
 ## Known Limitations and Deferred Work
 
-- Readiness policy kinds: `map` only — `all_settled` and supervisor-readiness kinds are deferred to P4.
+- Readiness policy kinds: `map` only — `all_settled` and supervisor-readiness kinds are deferred to the supervisor tool layer.
 - No client projection/checkpointing (`onCheckpoint`) yet; no tool-view pagination; residency is a no-op.
-- Map-policy intents are derived but not auto-dispatched by reconcile — they surface for supervisor tools in P4.
+- Map-policy intents are derived but not auto-dispatched by reconcile — they surface for the supervisor tools.
 - Record shape is copy-with-provenance (slim), a deliberate deviation from Maka's 18-facet full record; the stream layer never mutates stored records.
-- The coordinator is process-local: another process holding the same graph store will not wake this driver automatically (wake delivery is P5).
+- The coordinator is process-local: another process holding the same graph store will not wake this driver automatically (wake delivery is `dsh-graph-wakes`).

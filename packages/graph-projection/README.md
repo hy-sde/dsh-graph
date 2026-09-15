@@ -1,15 +1,10 @@
----
-description: "Serves the session's standing agent-graph snapshot from the host's graph/change publishes for clients and maintainers composing or debugging the graph projection unit."
-kind: "package-reference"
----
-
 # @hy-sde-org/dsh-graph-projection
 
 English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-graph-projection` serves the session's standing agent-graph snapshot — the whole bounded `SessionGraphProjection` (graph identity, closed/active status, revision, bounded work list, omitted counts, pending wake) — as the `graph` projection unit. The host (P7) owns graph state and publishes a complete post-change snapshot per graph movement as a `graph/change` session event; this unit folds those publishes into the session-projection seam (registry snapshot, change feed, every projection carrier) with no store coupling. Choose it in compositions that already mount the projection registry, such as the web app bundle whose graph rail is the reference consumer; assemblies without the registry are unaffected and their consumers read no graph key. Setup and publish semantics come first; the fold internals live in a collapsible developer section below.
+`dsh-graph-projection` serves the session's standing agent-graph snapshot — the whole bounded `SessionGraphProjection` (graph identity, closed/active status, revision, bounded work list, omitted counts, pending wake) — as the `graph` projection unit. The host owns graph state and publishes a complete post-change snapshot per graph movement as a `graph/change` session event; this unit folds those publishes into the session-projection seam (registry snapshot, change feed, every projection carrier) with no store coupling. Choose it in compositions that already mount the projection registry, such as the web app bundle whose graph rail is the reference consumer; assemblies without the registry are unaffected and their consumers read no graph key. Setup and publish semantics come first; the fold internals live in a collapsible developer section below.
 
 ## Table of Contents
 
@@ -99,8 +94,8 @@ The unit is a pure fold over committed `graph/change` events. One DSH session ow
 
 Read these pages when the unit's contract is not enough. They move from the registry that drives units to the graph packages the host publishes from.
 
-- [Session projection subsystem](../../../docs/subsystems/session-projection.md) — the registry that drives units and serves snapshot and change-feed values.
-- [Session projection registry package](../../session/session-projection/README.md) — the registry contract units register against.
+- [Session projection subsystem](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-projection.md) — the registry that drives units and serves snapshot and change-feed values.
+- [Session projection registry package](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session/session-projection/README.md) — the registry contract units register against.
 - [Graph stream package](../graph-stream/README.md) — the derived stream layer whose schedule and records feed the host's published snapshots.
 - [Tool graph package](../tool-graph/README.md) — the bounded model-visible snapshot vocabulary the client projection reuses with a tighter rail budget.
 

@@ -1,15 +1,10 @@
----
-description: "Agent Graph 主机侧装配：把 P1–P5 切片接到真实 harness 服务（存储、子代理、worktree、压缩、空闲），并提供主管工具使用的 agentGraphController 服务。"
-kind: "package-reference"
----
-
 # @hy-sde-org/dsh-graph-host
 
 [English](README.md) | 中文
 
 ## 摘要
 
-`dsh-graph-host` 是 Agent Graph 的主机侧装配（Maka 移植，P6–P7a 切片）：打开图控制单元（P1 `dsh-graph-control`），在真实 harness 接缝之上构建算子执行器（P3 `dsh-graph-executor`），通过运行身份账本喂给不带身份的 P3 记录汇，构造主管工具运行其上的 `AgentGraphController`（P4 `dsh-tool-graph`），并在图根会话的空闲边界驱动唤醒投递（P5 `dsh-graph-wakes`）。本包不提供任何工具或提示词段——模型可见面留在 `dsh-tool-graph`；本包提供服务与持久化 `graph/change` 事件流。
+`dsh-graph-host` 是 Agent Graph 的主机侧装配：打开图控制单元（`dsh-graph-control`），在真实 harness 接缝之上构建算子执行器（`dsh-graph-executor`），通过运行身份账本喂给不带身份的执行器记录汇，构造主管工具运行其上的 `AgentGraphController`，并在图根会话的空闲边界驱动唤醒投递（`dsh-graph-wakes`）。本包不提供任何工具或提示词段——模型可见面留在 `dsh-tool-graph`；本包提供服务与持久化 `graph/change` 事件流。
 
 `graph-host` Cordis 插件声明 `inject: ['agents', 'sessions', 'subagents', 'git', 'compaction']`，并在自身 fiber 上发布两个服务：
 
@@ -73,20 +68,14 @@ const services = await createGraphHostServices({
 })
 
 await services.attachGraph('graph_g1') // registers the controller, starts the wake runtime
-const snapshot = await services.snapshotFor('graph_g1') // bounded P6 session projection
+const snapshot = await services.snapshotFor('graph_g1') // bounded session projection
 await services.emitGraphChange(session.id, 'graph_g1', snapshot, snapshot.revision)
 await services.dispose() // stops wake delivery, cancels children, closes the store
 ```
 
 ### 接线
 
-仓库随附可选组合补丁 [`apps/cli/config/examples/graph/cordis.yml`](../../../apps/cli/config/examples/graph/cordis.yml)。从开发检出应用：
-
-```sh
-dsh web --patch apps/cli/config/examples/graph/cordis.yml
-```
-
-补丁携带上面给出的 `graph-host` 行，`rootSessionId` 保留为 `<ROOT_SESSION_ID>` 占位符，`subagentProvider: spawn`；请把占位符替换为部署的图根会话 id。预设行（`@hy-sde-org/dsh-tool-graph`、`@hy-sde-org/dsh-graph-projection`）挂载在图根会话的代理预设中，如上面的 `tool-graph` 所示。
+上面的行即完整接线：把 `graph-host` 行放入主机组合，`rootSessionId` 保留为 `<ROOT_SESSION_ID>` 占位符，`subagentProvider: spawn`；请把占位符替换为部署的图根会话 id。预设行（`@hy-sde-org/dsh-tool-graph`、`@hy-sde-org/dsh-graph-projection`）挂载在图根会话的代理预设中，如上面的 `tool-graph` 所示。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现
@@ -101,17 +90,17 @@ dsh web --patch apps/cli/config/examples/graph/cordis.yml
 
 ### 恰好一次激活守卫
 
-P3 执行器按算子序列化激活但不记忆声明，因此装配器用 `OncePerClaimGraphExecutor` 包裹：一个声明 id 对应一次子运行（每个装配），已完成（或进行中）激活后的重新驱动返回折叠的记录而不启动第二个子代理。守卫是进程本地的——持久化声明行仍是重启权威。
+执行器按算子序列化激活但不记忆声明，因此装配器用 `OncePerClaimGraphExecutor` 包裹：一个声明 id 对应一次子运行（每个装配），已完成（或进行中）激活后的重新驱动返回折叠的记录而不启动第二个子代理。守卫是进程本地的——持久化声明行仍是重启权威。
 
 ### 记录折叠与无持久化记录的决定
 
-P3 `recordSink` 收到的 `AgentGraphRecordSourceEvent` **不带**算子/会话身份（事件只带 `runId`），因此 `GraphRunIdentityLedger` 从执行器自己执行过的子启动中恢复身份（执行器把 `claim.targetRunId` 同时复制进启动输入与发出的事件），`InProcessGraphRecordSource` 按算子×会话键折叠终态事件。`readCommittedAgentGraphProjection`（P2）对该来源的回放与对子会话日志的回放完全相同，因此记录推导在一个主机进程内保持 P2 一致。
+执行器的 `recordSink` 收到的 `AgentGraphRecordSourceEvent` **不带**算子/会话身份（事件只带 `runId`），因此 `GraphRunIdentityLedger` 从执行器自己执行过的子启动中恢复身份（执行器把 `claim.targetRunId` 同时复制进启动输入与发出的事件），`InProcessGraphRecordSource` 按算子×会话键折叠终态事件。`readCommittedAgentGraphProjection`（来自流层）对该来源的回放与对子会话日志的回放完全相同，因此记录推导在一个主机进程内与流层一致。
 
-记录是派生状态，本切片**刻意保持进程内存**：子会话上的持久化 `graph/record` 事件在 `KNOWN_SESSION_EVENT_TYPES` 重新生成前会被持久化读路径拒绝（P6 范围），而把终态事件归因到子会话日志需要改 P3。持久化权威是一组控制行——调度、声明、供应、唤醒。**主机重启会丢失算子记录**，直到后续切片加入带归因的持久化事件；届时会话投影回退到调度/声明状态（如 `claimed`），直到该切片落地。
+记录是派生状态，本装配**刻意保持进程内存**：子会话上的持久化 `graph/record` 事件在 `KNOWN_SESSION_EVENT_TYPES` 重新生成前会被持久化读路径拒绝（主机接线范围），而把终态事件归因到子会话日志需要改执行器。持久化权威是一组控制行——调度、声明、供应、唤醒。**主机重启会丢失算子记录**，直到主机接线加入带归因的持久化事件；届时会话投影回退到调度/声明状态（如 `claimed`），直到该接线落地。
 
 ### 会话投影与 graph/change 契约
 
-`buildSessionGraphProjection` 把控制器整图快照变成有界的 P6 载荷。每条 `graph/change` 事件携带 `{ graphId, snapshot, revision }`：
+`buildSessionGraphProjection` 把控制器整图快照变成有界的投影载荷。每条 `graph/change` 事件携带 `{ graphId, snapshot, revision }`：
 
 ```ts
 interface SessionGraphProjection {
@@ -135,7 +124,7 @@ interface SessionGraphProjection {
 
 工作项有上限（`SESSION_PROJECTION_MAX_WORK = 128`：请求头部加终态尾部），记录尾随到 `SESSION_PROJECTION_MAX_RECORDS = 64`，指令到 `SESSION_PROJECTION_INSTRUCTION_MAX_CHARS = 300`；`omitted` 携带被排除的计数。`pendingWake` 在图的唤醒行为 `pending` 或 `retryable_failed` 时为真。状态优先级：调度停止先赢；然后是算子的终态记录（执行器只在子代理落定后折叠它——`[operator failed] …`/`[operator cancelled]` 摘要映射为 `failed`/`stopped`，其余映射为 `finished`）；然后是声明准入状态（仅进行中）；再是 `requested`。终态记录压过声明准入，因为准入状态没有终态。
 
-`emitChange`（每次调度提交、每次协调、每次唤醒投递后调用）是尽力而为的，按内容指纹去重，并按图串行化，使并发触发对每次指纹变化至多发出一个事件。事件只追加到根会话日志——无界面放置——由 P6 投影层折叠。
+`emitChange`（每次调度提交、每次协调、每次唤醒投递后调用）是尽力而为的，按内容指纹去重，并按图串行化，使并发触发对每次指纹变化至多发出一个事件。事件只追加到根会话日志——无界面放置——由投影层折叠。
 
 ### 唤醒投递
 
@@ -144,23 +133,23 @@ interface SessionGraphProjection {
 <a id="further-exploration"></a>
 ## 进一步探索
 
-- [dsh-graph-control](../graph-control/README.zh.md)（P1）— 本装配打开的持久化存储（调度日志、声明、供应、唤醒）。
-- [dsh-graph-stream](../graph-stream/README.zh.md)（P2）— 执行器与控制器驱动的协调器与记录投影折叠。
-- [dsh-graph-executor](../graph-executor/README.zh.md)（P3）— 算子执行器及其子运行器/worktree 池接缝。
-- [dsh-tool-graph](../tool-graph/README.zh.md)（P4）— `agentGraphController` 上的主管工具。
-- [dsh-graph-wakes](../graph-wakes/README.zh.md)（P5）— 本装配接线的空闲门控唤醒运行时。
-- [dsh-graph-projection](../graph-projection/README.zh.md)（P6）— 把 `graph/change` 事件折叠进会话图投影。
+- [dsh-graph-control](../graph-control/README.zh.md) — 本装配打开的持久化存储（调度日志、声明、供应、唤醒）。
+- [dsh-graph-stream](../graph-stream/README.zh.md) — 执行器与控制器驱动的协调器与记录投影折叠。
+- [dsh-graph-executor](../graph-executor/README.zh.md) — 算子执行器及其子运行器/worktree 池接缝。
+- [dsh-tool-graph](../tool-graph/README.zh.md) — `agentGraphController` 上的主管工具。
+- [dsh-graph-wakes](../graph-wakes/README.zh.md) — 本装配接线的空闲门控唤醒运行时。
+- [dsh-graph-projection](../graph-projection/README.zh.md) — 把 `graph/change` 事件折叠进会话图投影。
 - `tests/graph-host.spec.ts` — 真实 SQLite 存储 + 假子代理/worktree/压缩/会话事件/空闲。
 
 <a id="model-experience"></a>
 ## 模型体验
 
-此处不产生任何模型可见的提示词文本。模型看到的是 `dsh-tool-graph` 的三个主管工具；本包的贡献是它们运行其上的控制器服务与追加到根会话日志的 `graph/change` 事件（P6 投影的持久化输入，而非界面元素）。无 KV 缓存或 token 影响：执行器自身不调用模型提供者，而是通过注入接缝启动子代理。
+此处不产生任何模型可见的提示词文本。模型看到的是 `dsh-tool-graph` 的三个主管工具；本包的贡献是它们运行其上的控制器服务与追加到根会话日志的 `graph/change` 事件（会话投影的持久化输入，而非界面元素）。无 KV 缓存或 token 影响：执行器自身不调用模型提供者，而是通过注入接缝启动子代理。
 
 <a id="known-limitations-and-deferred-work"></a>
 ## 已知限制与后续工作
 
-- **算子记录是进程本地的。** P3 记录汇不带算子/会话身份，且持久化子会话事件在 `KNOWN_SESSION_EVENT_TYPES` 重新生成前会被拒绝，因此 `InProcessGraphRecordSource` + `GraphRunIdentityLedger` 只在内存折叠终态记录：主机重启会丢失它们，会话投影回退到调度/声明状态，直到后续切片加入带归因的持久化事件。
+- **算子记录是进程本地的。** 执行器的记录汇不带算子/会话身份，且持久化子会话事件在 `KNOWN_SESSION_EVENT_TYPES` 重新生成前会被拒绝，因此 `InProcessGraphRecordSource` + `GraphRunIdentityLedger` 只在内存折叠终态记录：主机重启会丢失它们，会话投影回退到调度/声明状态，直到主机接线加入带归因的持久化事件。
 - **恰好一次激活守卫是进程本地的。** `OncePerClaimGraphExecutor` 在内存按声明 id 记忆；重启后重新驱动的声明可能启动第二次子运行，因为持久化声明行记录准入但不记录终态结果。
 - **`graph/change` 去重是每个装配且内存内的**：指纹映射在重启时重置，因此重启的主机可能对未变化的图重新发出一个事件。
 - **每次挂载一个根会话**：插件 Config 命名单个 `rootSessionId`（唤醒运行时与发射目标以它为范围），且 `agentGraphController` 服务名是每个主机 fiber 的单例——部署多个图根时，每个根需要独立 realm 中的独立主机行，而不是共享一行。

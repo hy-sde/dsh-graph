@@ -1,18 +1,18 @@
 {
   "name": "@hy-sde-org/dsh-graph-control",
-  "description": "Durable control plane for the Agent Graph: schedule updates, exactly-once intent claims, operator provisions, and supervisor wakes (Port 1 of Maka Agent Graph)",
+  "description": "Durable control plane for the Agent Graph: schedule updates, exactly-once intent claims, operator provisions, and supervisor wakes.",
   "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/graph/graph-control"
+    "url": "git+https://github.com/hy-sde/dsh-plugins.git",
+    "directory": "dsh-graph/packages/graph-control"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

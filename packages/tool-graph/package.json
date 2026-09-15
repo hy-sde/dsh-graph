@@ -1,18 +1,18 @@
 {
   "name": "@hy-sde-org/dsh-tool-graph",
-  "description": "Agent Graph supervisor tools: view_agent_graph, update_agent_graph, yield_agent_graph over a host-provided graph controller, with the orchestration:graph prompt section (Maka port, slice P4)",
+  "description": "Agent Graph supervisor tools: view_agent_graph, update_agent_graph, yield_agent_graph over a host-provided graph controller, with the orchestration:graph prompt section.",
   "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/graph/tool-graph"
+    "url": "git+https://github.com/hy-sde/dsh-plugins.git",
+    "directory": "dsh-graph/packages/tool-graph"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

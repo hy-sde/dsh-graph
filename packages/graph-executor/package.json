@@ -1,18 +1,18 @@
 {
   "name": "@hy-sde-org/dsh-graph-executor",
-  "description": "Operator executor adapter for the Agent Graph: deterministic worktree leases, durable operator bindings, and child-run serialization with terminal record emission (Maka port, slice P3)",
+  "description": "Operator executor adapter for the Agent Graph: deterministic worktree leases, durable operator bindings, and child-run serialization with terminal record emission.",
   "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/graph/graph-executor"
+    "url": "git+https://github.com/hy-sde/dsh-plugins.git",
+    "directory": "dsh-graph/packages/graph-executor"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

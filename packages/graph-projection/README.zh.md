@@ -1,15 +1,10 @@
----
-description: "从宿主的 graph/change 发布提供会话当前 Agent Graph 快照；面向组合或调试 graph 投影单元的客户端与维护者。"
-kind: "package-reference"
----
-
 # @hy-sde-org/dsh-graph-projection
 
 [English](README.md) | 中文
 
 ## 概述
 
-`dsh-graph-projection` 以 `graph` 投影单元提供会话当前的 Agent Graph 快照——完整且有界的 `SessionGraphProjection`（图身份、closed/active 状态、版本、有界工作列表、省略计数、待投递 wake）。宿主（P7）拥有图状态，并在每次图状态变化时以 `graph/change` 会话事件发布一份完整的变更后快照；本单元把这类发布折叠进会话投影接缝（注册表快照、变更流、每条投影载体），与存储无耦合。在已挂载投影注册表的组合中选择它，例如以图导航栏为参考消费者的 Web 应用包；没有注册表的装配不受影响，其消费者读不到 `graph` 键。装配与发布语义在前；折叠内部细节放在下方可折叠的开发者章节中。
+`dsh-graph-projection` 以 `graph` 投影单元提供会话当前的 Agent Graph 快照——完整且有界的 `SessionGraphProjection`（图身份、closed/active 状态、版本、有界工作列表、省略计数、待投递 wake）。宿主拥有图状态，并在每次图状态变化时以 `graph/change` 会话事件发布一份完整的变更后快照；本单元把这类发布折叠进会话投影接缝（注册表快照、变更流、每条投影载体），与存储无耦合。在已挂载投影注册表的组合中选择它，例如以图导航栏为参考消费者的 Web 应用包；没有注册表的装配不受影响，其消费者读不到 `graph` 键。装配与发布语义在前；折叠内部细节放在下方可折叠的开发者章节中。
 
 ## 目录
 
@@ -99,8 +94,8 @@ Web 聊天 UI 通过投影标准席位 `useProjection('graph')` 读取该值；�
 
 当单元约定不够用时阅读以下页面。它们从驱动单元的注册表逐步进入宿主据以发布的图包。
 
-- [会话投影子系统](../../../docs/subsystems/session-projection.zh.md)——驱动单元并提供快照与变更流值的注册表。
-- [会话投影注册表包](../../session/session-projection/README.zh.md)——单元注册所依据的注册表约定。
+- [会话投影子系统](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-projection.zh.md)——驱动单元并提供快照与变更流值的注册表。
+- [会话投影注册表包](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session/session-projection/README.zh.md)——单元注册所依据的注册表约定。
 - [图流包](../graph-stream/README.zh.md)——派生态流层，其计划与记录供宿主构建发布快照。
 - [工具图包](../tool-graph/README.zh.md)——有界模型可见快照词汇，客户端投影以更紧的导航栏预算复用它。
 

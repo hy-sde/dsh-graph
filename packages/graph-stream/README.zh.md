@@ -1,21 +1,16 @@
----
-description: "Agent Graph 的派生流层：确定性标识、记录/轨迹/就绪/调度投影、交接文本，以及进程内协调驱动器。"
-kind: "package-reference"
----
-
 # @hy-sde-org/dsh-graph-stream
 
 [English](README.md) | 中文
 
 ## 摘要
 
-`dsh-graph-stream` 是 Agent Graph 的派生层（Maka 移植，P2 切片）。它叠加在 `@hy-sde-org/dsh-graph-control`（持久化决策存储，P1）之上，负责**一切可以从已提交行重算出来的东西**：工作状态投影、记录折叠、轨迹/路由派生、就绪意图、输入交接文本，以及单飞式协调驱动器（`AgentGraphCoordinator`）——后者对该存储执行 Maka 原始驱动循环（预置 → 监督 → 选择 → 渲染 → 执行）。
+`dsh-graph-stream` 是 Agent Graph 的派生层。它叠加在 `@hy-sde-org/dsh-graph-control`（持久化决策存储）之上，负责**一切可以从已提交行重算出来的东西**：工作状态投影、记录折叠、轨迹/路由派生、就绪意图、输入交接文本，以及单飞式协调驱动器（`AgentGraphCoordinator`）——后者对该存储执行 Maka 原始驱动循环（预置 → 监督 → 选择 → 渲染 → 执行）。
 
 拆分遵循 Maka 的一条硬规则：存储是权威，流层除经由存储自身的提交/声明/预置方法外绝不写任何东西。这里的每个投影都是确定性的纯函数——重算它不会启动任何工作；准予与执行由存储封口（在其观察到的调度修订号上按预分配 turn/run 身份声明）。
 
 标识为确定性 sha256 并截取前 32 个十六进制字符（`graph_intent_…`、`graph_operator_…`、`graph_edge_…`、`graph_route_…`、`graph_record_…`、`graph_claim_…`），因此重放在构造上即幂等。身份比较使用 UTF-16 码元顺序（`compareAgentGraphIdentity`），而非 locale 比较。
 
-本包不提供任何工具、提示词或插件行——由执行器适配器（P3）和主管工具（P4）消费。
+本包不提供任何工具、提示词或插件行——由执行器适配器和主管工具消费。
 
 ## 目录
 
@@ -79,12 +74,12 @@ export interface AgentGraphExecutor {
 }
 ```
 
-协调器从不直接调用提供方——P3 提供基于子代理与工作树的实现。
+协调器从不直接调用提供方——由执行器包提供基于子代理与工作树的实现。
 
 <a id="further-exploration"></a>
 ## 进一步探索
 
-- `packages/graph/graph-control`（P1）：本层折叠的持久化行。
+- [`@hy-sde-org/dsh-graph-control`](../graph-control/README.zh.md)：本层折叠的持久化行。
 - `src/reconcile.ts` / `src/coordinator.ts`：驱动循环与状态推导。
 - `src/hash.ts` / `src/identity.ts`：所有标识与指纹依赖的规范化与排序原语。
 - `tests/graph-stream.spec.ts` / `tests/reconcile.spec.ts`：针对真实 sqlite 存储的投影、校验、交接与端到端驱动场景。
@@ -97,8 +92,8 @@ export interface AgentGraphExecutor {
 <a id="known-limitations-and-deferred-work"></a>
 ## 已知限制与后续工作
 
-- 就绪策略种类：仅 `map`——`all_settled` 与主管就绪种类推迟到 P4。
+- 就绪策略种类：仅 `map`——`all_settled` 与主管就绪种类推迟到主管工具层。
 - 尚无客户端投影/检查点（`onCheckpoint`）；无工具视图分页；驻留为空操作。
-- map 策略意图只派生、不由 reconcile 自动派发——它们留给 P4 的主管工具。
+- map 策略意图只派生、不由 reconcile 自动派发——它们留给主管工具。
 - 记录形态为带来源的副本（精简），是有意偏离 Maka 的 18 面完整记录；流层绝不修改已存记录。
-- 协调器为进程本地：另一进程持有同一图存储不会自动唤醒本驱动器（唤醒投递为 P5）。
+- 协调器为进程本地：另一进程持有同一图存储不会自动唤醒本驱动器（唤醒投递为 `dsh-graph-wakes`）。
