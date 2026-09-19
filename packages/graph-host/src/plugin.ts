@@ -92,9 +92,10 @@ export function apply(ctx: Context, config: Config): void {
   const state = new PluginState(ctx, config)
   ctx.effect(() => {
     const stopCreated = ctx.on('agent/created', ({ agent }) => {
-      if (String(agent.id) !== config.rootSessionId) return
+      if (String(agent.id) !== config.rootSessionId) return undefined
       state.attachIdleListener(agent)
       void state.build()
+      return undefined
     })
     const root = ctx.agents.get(SessionId(config.rootSessionId))
     if (root !== undefined) {

@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-graph-wakes",
   "description": "Agent Graph supervisor wake delivery: idle-gated host runtime over the durable wake rows.",
-  "version": "0.1.5-rc.1",
+  "version": "0.1.6-alpha.2",
   "publishConfig": {
     "access": "public"
   },
