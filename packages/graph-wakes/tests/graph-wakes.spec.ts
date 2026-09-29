@@ -222,20 +222,55 @@ describe('GraphWakeRuntime', () => {
     expect(calls).toHaveLength(3)
 
     const wake = must(await store.readSupervisorWake(GRAPH, WAKE_ID))
-    expect(wake.status).toBe('retryable_failed')
+    expect(wake.status).toBe('exhausted')
     expect(wake.attemptCount).toBe(3)
+    expect(wake.failureReason).toBe('boom-3')
+    // Exhausted wakes leave the retryable/unsettled listings and recovery.
+    expect(await store.listRetryableSupervisorWakes()).toHaveLength(0)
+    expect(await store.listUnsettledSupervisorWakes()).toHaveLength(0)
+    expect(await store.recoverSupervisorWakes()).toBe(0)
     const attempts = await store.listSupervisorWakeAttempts(GRAPH, WAKE_ID)
     expect(attempts.map(attempt => attempt.failureReason)).toEqual(['boom-1', 'boom-2', 'boom-3'])
 
     clock.advance(1_000_000)
     await runtime.handleIdle(ROOT)
     expect(calls).toHaveLength(3)
+    expect(await runtime.pendingWakes()).toHaveLength(0)
+  })
+
+  it('exhausts an at-cap retryable wake on the next sweep, even without a delivery', async () => {
+    const store = await openStore(tmpPath())
+    await claimWake(store)
+    // One failed attempt at a 1-attempt ceiling: the wake is now at cap.
+    const { deliver, calls } = makeDeliver([{ kind: 'retryable_failed', failureReason: 'boom-1' }])
+    const runtime = makeRuntime(store, deliver, { maxAttempts: 1, now: () => 0 })
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(1)
+    const wake = must(await store.readSupervisorWake(GRAPH, WAKE_ID))
+    expect(wake.status).toBe('exhausted')
+    expect(wake.failureReason).toBe('boom-1')
+    expect(await runtime.pendingWakes()).toHaveLength(0)
+    expect(await store.listUnsettledSupervisorWakes()).toHaveLength(0)
+  })
+
+  it('keeps waiting_permission wakes at their cap rather than exhausting them', async () => {
+    const store = await openStore(tmpPath())
+    await claimWake(store)
+    const { deliver } = makeDeliver([{ kind: 'waiting_permission' }])
+    const runtime = makeRuntime(store, deliver, { maxAttempts: 1, now: () => 0 })
+    await runtime.handleIdle(ROOT)
+    const wake = must(await store.readSupervisorWake(GRAPH, WAKE_ID))
+    // A permission waiter is not a failure: it stays waiting_permission at the cap.
+    expect(wake.status).toBe('waiting_permission')
+    // A further idle sweep must not exhaust it either.
+    await runtime.handleIdle(ROOT)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('waiting_permission')
   })
 
   it('recovers overflow with exactly one compact and one bounded partial delivery', async () => {
     const store = await openStore(tmpPath())
     await claimWake(store)
-    const onCompact = vi.fn(async () => {})
+    const onCompact = vi.fn(async () => { })
     const { deliver, calls } = makeDeliver([
       { kind: 'retryable_failed', overflow: true, failureReason: 'context overflow' },
       { kind: 'delivered', partialResult: true },
@@ -261,7 +296,7 @@ describe('GraphWakeRuntime', () => {
   it('refuses a third identical full delivery after the partial attempt overflows', async () => {
     const store = await openStore(tmpPath())
     await claimWake(store)
-    const onCompact = vi.fn(async () => {})
+    const onCompact = vi.fn(async () => { })
     const { deliver, calls } = makeDeliver([
       { kind: 'retryable_failed', overflow: true, failureReason: 'overflow-1' },
       { kind: 'retryable_failed', overflow: true, partialResult: true, failureReason: 'overflow-2' },
@@ -278,9 +313,10 @@ describe('GraphWakeRuntime', () => {
     expect(calls).toHaveLength(2)
     expect(onCompact).toHaveBeenCalledTimes(1)
     expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID))).toMatchObject({
-      status: 'retryable_failed',
+      status: 'exhausted',
       attemptCount: 2,
     })
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).failureReason).toBe('overflow-2')
   })
 
   it('terminates an overflowing wake when no compact hook is wired', async () => {
@@ -293,9 +329,10 @@ describe('GraphWakeRuntime', () => {
     await runtime.handleIdle(ROOT)
     expect(calls).toHaveLength(1)
     expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID))).toMatchObject({
-      status: 'retryable_failed',
+      status: 'exhausted',
       attemptCount: 1,
     })
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).failureReason).toBe('overflow')
   })
 
   it('parks waiting_permission and never re-attempts it on later idle signals', async () => {

@@ -396,6 +396,83 @@ describe('supervisor wakes', () => {
     expect(await store.listRetryableSupervisorWakes()).toHaveLength(1)
     expect(await store.recoverSupervisorWakes()).toBe(0)
   })
+
+  it('enforces a durable attempt ceiling and exhausts a retryable wake at the cap', async () => {
+    const store = await openStore(await freshPath())
+    await store.claimSupervisorWake(WAKE)
+    const first = await store.beginSupervisorWakeAttempt({
+      graphId: GRAPH,
+      wakeId: WAKE.wakeId,
+      attemptId: 'a1',
+      turnId: 't1',
+      maxAttempts: 1,
+    })
+    expect(first.acquired).toBe(true)
+    await store.completeSupervisorWakeAttempt({
+      graphId: GRAPH,
+      wakeId: WAKE.wakeId,
+      attemptId: 'a1',
+      status: 'retryable_failed',
+      failureReason: 'provider limit',
+    })
+    // At the ceiling a further begin is refused without incrementing.
+    const blocked = await store.beginSupervisorWakeAttempt({
+      graphId: GRAPH,
+      wakeId: WAKE.wakeId,
+      attemptId: 'a2',
+      turnId: 't2',
+      maxAttempts: 1,
+    })
+    expect(blocked.acquired).toBe(false)
+    expect(blocked.wake.attemptCount).toBe(1)
+    // Exhaust makes the wake terminal and keeps it out of retryable/recovery.
+    const exhausted = await store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'provider limit')
+    expect(exhausted.status).toBe('exhausted')
+    expect(exhausted.failureReason).toBe('provider limit')
+    expect(await store.listRetryableSupervisorWakes()).toHaveLength(0)
+    expect(await store.listUnsettledSupervisorWakes()).toHaveLength(0)
+    expect(await store.recoverSupervisorWakes()).toBe(0)
+    // A later begin is refused; the exhaustion is idempotent.
+    const after = await store.beginSupervisorWakeAttempt({
+      graphId: GRAPH,
+      wakeId: WAKE.wakeId,
+      attemptId: 'a3',
+      turnId: 't3',
+    })
+    expect(after.acquired).toBe(false)
+    expect((await store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'again')).status).toBe('exhausted')
+  })
+
+  it('exhaustSupervisorWake rejects a non-retryable wake and a bad reason', async () => {
+    const store = await openStore(await freshPath())
+    await store.claimSupervisorWake(WAKE)
+    // Pending is not exhaustible.
+    await expect(store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'boom')).rejects.toThrow(/not retryable_failed/)
+    await expect(store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, '')).rejects.toThrow(/non-empty/)
+    await expect(store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'x'.repeat(4001))).rejects.toThrow(/at most 4000/)
+    // Running is not exhaustible either.
+    await store.beginSupervisorWakeAttempt({ graphId: GRAPH, wakeId: WAKE.wakeId, attemptId: 'a1', turnId: 't1' })
+    await expect(store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'boom')).rejects.toThrow(/not retryable_failed/)
+  })
+
+  it('supersede leaves exhausted wakes alone', async () => {
+    const store = await openStore(await freshPath())
+    await store.claimSupervisorWake(WAKE)
+    await store.claimSupervisorWake({ ...WAKE, wakeId: 'graph_wake_2' })
+    await store.beginSupervisorWakeAttempt({ graphId: GRAPH, wakeId: WAKE.wakeId, attemptId: 'a1', turnId: 't1' })
+    await store.completeSupervisorWakeAttempt({
+      graphId: GRAPH,
+      wakeId: WAKE.wakeId,
+      attemptId: 'a1',
+      status: 'retryable_failed',
+      failureReason: 'boom',
+    })
+    await store.exhaustSupervisorWake(GRAPH, WAKE.wakeId, 'boom')
+    const changed = await store.supersedeSupervisorWakes({ rootSessionIds: ['root-1'], reason: 'shutdown' })
+    expect(changed).toBe(1)
+    expect((await store.readSupervisorWake(GRAPH, WAKE.wakeId))?.status).toBe('exhausted')
+    expect((await store.readSupervisorWake(GRAPH, 'graph_wake_2'))?.status).toBe('superseded')
+  })
 })
 
 /* ------------------------ durability across reopen --------------------- */

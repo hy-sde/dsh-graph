@@ -181,6 +181,7 @@ export type AgentGraphSupervisorWakeStatus =
   | 'delivered'
   | 'superseded'
   | 'retryable_failed'
+  | 'exhausted'
 
 export interface AgentGraphSupervisorWakeRecord {
   readonly wakeId: string
@@ -194,6 +195,8 @@ export interface AgentGraphSupervisorWakeRecord {
   readonly createdAt: number
   readonly updatedAt: number
   readonly supersededReason?: string
+  /** Terminal exhaustion reason, present only when the wake ended in `exhausted`. */
+  readonly failureReason?: string
 }
 
 export interface AgentGraphSupervisorWakeAttemptRecord {
@@ -219,6 +222,8 @@ export interface BeginAgentGraphSupervisorWakeAttemptRequest {
   readonly wakeId: string
   readonly attemptId: string
   readonly turnId: string
+  /** Optional durable attempt ceiling enforced by the store; the runtime passes its own limit. */
+  readonly maxAttempts?: number
 }
 
 export interface CompleteAgentGraphSupervisorWakeAttemptRequest {

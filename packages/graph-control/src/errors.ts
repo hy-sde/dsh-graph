@@ -19,6 +19,7 @@ export type GraphControlErrorCode =
   | 'wake-not-found'
   | 'wake-attempt-not-found'
   | 'wake-already-delivered'
+  | 'wake-conflict'
   | 'malformed-state'
 
 export class GraphControlError extends Error {

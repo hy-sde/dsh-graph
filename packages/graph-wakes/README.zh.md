@@ -45,7 +45,7 @@ await runtime.stop() // unsubscribe, cancel timers, await the in-flight sweep
 
 ```ts
 // Accessors
-await runtime.pendingWakes('graph_g1') // pending + retryable wakes (terminal exhausted included)
+await runtime.pendingWakes('graph_g1') // pending + retryable wakes (terminal statuses excluded)
 await runtime.wakeStatus('graph_wake_abc') // durable row, any status
 ```
 
@@ -69,7 +69,7 @@ await runtime.wakeStatus('graph_wake_abc') // durable row, any status
 
 ### 重试、退避与终态失败
 
-`retryable_failed` 结果会在 `outcome.nextAttemptAt` 或 `now + 30 秒 × 尝试序号` 重新武装该唤醒（默认值：`DEFAULT_RETRY_BACKOFF_MS`、`DEFAULT_MAX_DELIVERY_ATTEMPTS = 3`）；重新武装是进程本地的，分段计时器会为所属根重新驱动 `handleIdle`。一旦 `attemptCount` 达到 `maxAttempts`，该唤醒对本运行时即为终态——存储没有 `failed` 状态，因此行停留在上限处的 `retryable_failed` 且不再重新武装。
+`retryable_failed` 结果会在 `outcome.nextAttemptAt` 或 `now + 30 秒 × 尝试序号` 重新武装该唤醒（默认值：`DEFAULT_RETRY_BACKOFF_MS`、`DEFAULT_MAX_DELIVERY_ATTEMPTS = 3`）；重新武装是进程本地的，分段计时器会为所属根重新驱动 `handleIdle`。一旦 `attemptCount` 达到 `maxAttempts`，运行时将该唤醒持久化耗尽（`exhausted`，最后失败原因记录在唤醒行上）：它离开未决/可重试列表，不再重新武装，并在重启后保持终态。
 
 ### 上下文溢出恢复
 
@@ -85,7 +85,7 @@ await runtime.wakeStatus('graph_wake_abc') // durable row, any status
 
 ### 重启持久性
 
-运行时需要的全部状态都在存储中：同一存储上的新 `GraphWakeRuntime` 看到相同的唤醒行，在下一个空闲处重新武装遗留的 `retryable_failed` 唤醒（如 Maka 的 `recover`），且只要尝试计数仍允许就不会拒绝。退避时间戳与溢出标记是进程本地的，刻意不持久化。
+运行时需要的全部状态都在存储中：同一存储上的新 `GraphWakeRuntime` 看到相同的唤醒行，在下一个空闲处重新武装遗留的 `retryable_failed` 唤醒（如 Maka 的 `recover`），并把任何已达上限的可重试行持久化耗尽而不是任其悬置。退避时间戳与溢出标记是进程本地的，刻意不持久化。
 
 <a id="further-exploration"></a>
 ## 进一步探索
@@ -105,7 +105,7 @@ await runtime.wakeStatus('graph_wake_abc') // durable row, any status
 ## 已知限制与后续工作
 
 - 尝试行没有 `partialResult`（或溢出）列：一次压缩/一次部分的标记是进程本地的。重启会清除它们，因此在 `attemptCount` 上限停止重试前还可能发生一次完整尝试；超过上限仍不可能。
-- 终态失败没有存储状态：耗尽的唤醒停留在尝试上限处的 `retryable_failed`。控制存储的状态并集已固定。
+- 达到尝试上限时运行时将该唤醒持久化耗尽（`exhausted`）；若在最后一次可重试完成与耗尽调用之间崩溃，行会停留在上限处的 `retryable_failed`，下一次空闲扫掠会将其耗尽。
 - 此处不恢复 `running` 唤醒（begin 与 complete 之间崩溃）：被中断的尝试是否真的完成是运行时事实，控制存储的 `recoverSupervisorWakes` 空操作把该事实留给主机接线。
 - `waiting_permission` 唤醒被停驻且绝不重试；权限响应恢复（Maka 的 `notifyPermissionResponse`）推迟到主机接线。
 - 跨进程协调不在范围内：与协调器一样，运行时是进程本地的，因此持有同一存储的另一进程不会唤醒本运行时。

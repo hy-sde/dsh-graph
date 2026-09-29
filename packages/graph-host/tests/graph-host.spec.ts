@@ -31,6 +31,7 @@ import {
 import type { AgentGraphRunClaimedIntentInput } from '@hy-sde-org/dsh-graph-stream'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
+import { CONTEXT_WINDOW_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type {
   SubagentResult,
@@ -44,6 +45,7 @@ import {
   createGraphHostServices,
   GraphHostContextOverflowError,
   GraphHostWorktreePool,
+  isContextOverflow,
   SERVICE_AGENT_GRAPH_CONTROLLER,
   SERVICE_GRAPH_HOST,
 } from '../src/index.ts'
@@ -705,6 +707,27 @@ function stubAgent(): Agent {
     session: { append: () => undefined },
   } as unknown as Agent
 }
+
+describe('context-overflow classification', () => {
+  it('recognizes the owned marker and the conventional overflow property', () => {
+    expect(isContextOverflow(new GraphHostContextOverflowError('boom'))).toBe(true)
+    expect(isContextOverflow({ overflow: true, message: 'boom' })).toBe(true)
+    expect(isContextOverflow(new Error('boom'))).toBe(false)
+  })
+
+  it('recognizes the harness LLM overflow code and shared provider wording (Maka #5780 wiring)', () => {
+    const coded = Object.assign(new Error('agent context overflowed'), {
+      code: CONTEXT_WINDOW_EXCEEDED_CODE,
+    })
+    expect(isContextOverflow(coded)).toBe(true)
+    // Shared LLM classifier wording; the Kimi model-qualified regex shipped in
+    // the fork's llm package reaches this classifier on republish (Maka #5780).
+    expect(isContextOverflow(new Error('context_length_exceeded maximum context length'))).toBe(true)
+    expect(isContextOverflow(new Error('This model maximum context length is 128000 tokens'))).toBe(true)
+    expect(isContextOverflow(new Error('input is too long for this model'))).toBe(true)
+    expect(isContextOverflow(new Error('unrelated provider failure'))).toBe(false)
+  })
+})
 
 describe('graph-host plugin', () => {
   it('provides the controller + services when the root agent is already live', async () => {

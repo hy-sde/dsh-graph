@@ -66,6 +66,12 @@ export interface GraphWakeStore {
   completeSupervisorWakeAttempt(
     request: CompleteAgentGraphSupervisorWakeAttemptRequest,
   ): Promise<AgentGraphSupervisorWakeRecord>
+  /**
+   * Terminal exhaustion: mark a retryable-failed wake `exhausted` durably so it
+   * leaves unsettled/retryable listings and survives restarts (idempotent when
+   * already exhausted).
+   */
+  exhaustSupervisorWake(graphId: string, wakeId: string, reason: string): Promise<AgentGraphSupervisorWakeRecord>
   supersedeSupervisorWakes(request: SupersedeAgentGraphSupervisorWakesRequest): Promise<number>
   listScheduleUpdates(graphId: string): Promise<AgentGraphScheduleUpdate[]>
   snapshot(): Promise<AgentGraphControlSnapshot>

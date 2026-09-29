@@ -167,9 +167,8 @@ export class GraphWakeRuntime {
   }
 
   /**
-   * Wakes still open to the runtime: pending and retryable (terminal exhausted
-   * wakes included), optionally for one graph. Running, parked, delivered, and
-   * superseded wakes are excluded.
+   * Wakes still open to the runtime: pending and retryable; terminal statuses
+   * (delivered, superseded, exhausted) are excluded. Optionally for one graph.
    * @param graphId - optional graph filter.
    * @returns a copy of the matching wakes, ordered by creation time.
    */
@@ -255,7 +254,8 @@ export class GraphWakeRuntime {
     if (this.rootSessionId !== undefined && wake.rootSessionId !== this.rootSessionId) return false
     if (wake.status === 'pending') return true
     if (wake.status !== 'retryable_failed') return false
-    if (wake.attemptCount >= this.maxAttempts) return false
+    // At-cap retryable wakes stay due so delivery can exhaust them durably
+    // instead of leaving them unsettled forever (Maka #5780).
     if (this.overflowRecovery.get(wake.wakeId)?.exhausted === true) return false
     const entry = this.rearm.get(wake.wakeId)
     return entry === undefined || entry.at <= this.now()
@@ -263,6 +263,16 @@ export class GraphWakeRuntime {
 
   /** Deliver one wake: stop-check, store CAS, deliver hook, durable settle. */
   private async deliverWake(wake: AgentGraphSupervisorWakeRecord): Promise<void> {
+    // Terminal exhaustion is not deliverable; a retryable wake at the durable
+    // ceiling exhausts now instead of being re-swept forever (Maka #5780).
+    if (wake.status === 'exhausted') {
+      this.forget(wake.wakeId)
+      return
+    }
+    if (wake.status === 'retryable_failed' && wake.attemptCount >= this.maxAttempts) {
+      await this.exhaust(wake, { kind: 'retryable_failed', ...(wake.failureReason !== undefined ? { failureReason: wake.failureReason } : {}) })
+      return
+    }
     if (await this.isGraphStopped(wake)) {
       await this.store.supersedeSupervisorWakes({
         rootSessionIds: [wake.rootSessionId],
@@ -279,9 +289,17 @@ export class GraphWakeRuntime {
       wakeId: wake.wakeId,
       attemptId,
       turnId: attemptId,
+      maxAttempts: this.maxAttempts,
     })
-    // Another runtime or a retried sweep already owns this attempt row.
-    if (!begun.acquired || begun.attempt === undefined) return
+    // Another runtime or a retried sweep already owns this attempt row. The
+    // store refuses at the durable ceiling: exhaust that wake instead of
+    // dropping it back to the sweep list (Maka #5780).
+    if (!begun.acquired || begun.attempt === undefined) {
+      if (begun.wake.status === 'retryable_failed' && begun.wake.attemptCount >= this.maxAttempts) {
+        await this.exhaust(begun.wake, { kind: 'retryable_failed', ...(begun.wake.failureReason !== undefined ? { failureReason: begun.wake.failureReason } : {}) })
+      }
+      return
+    }
     let outcome: GraphWakeDeliveryOutcome
     try {
       outcome = await this.deliver({
@@ -317,7 +335,9 @@ export class GraphWakeRuntime {
     }
     const attemptCount = wake.attemptCount + 1
     if (attemptCount >= this.maxAttempts) {
-      this.forget(wake.wakeId)
+      // Durable exhaustion: the wake leaves unsettled/retryable listings and
+      // survives a restart (Maka #5780). Idempotent and conflict-safe.
+      await this.exhaust(wake, outcome)
       return
     }
     if (outcome.overflow === true) {
@@ -327,6 +347,22 @@ export class GraphWakeRuntime {
     const at = outcome.nextAttemptAt ?? this.now() + DEFAULT_RETRY_BACKOFF_MS * attemptCount
     this.rearm.set(wake.wakeId, { at, rootSessionId: wake.rootSessionId })
     this.armTimer()
+  }
+
+  /**
+   * Durable exhaustion of a retryable wake: persist `exhausted` so the row
+   * leaves unsettled/retryable listings and stays terminal across restarts.
+   * Never throws for a non-retryable outcome — the runtime exhausts only its
+   * own delivery attempt results; a store conflict surfaces via onError.
+   */
+  private async exhaust(wake: AgentGraphSupervisorWakeRecord, outcome: GraphWakeDeliveryOutcome): Promise<void> {
+    const reason = (outcome.failureReason ?? wake.failureReason ?? 'delivery_attempts_exhausted').slice(0, 4_000)
+    try {
+      await this.store.exhaustSupervisorWake(wake.graphId, wake.wakeId, reason)
+    } catch (error: unknown) {
+      this.report(wake.rootSessionId, error)
+    }
+    this.forget(wake.wakeId)
   }
 
   /** One-compact-then-one-partial recovery; never a third identical full retry. */
@@ -341,15 +377,10 @@ export class GraphWakeRuntime {
     }
     const partialAttempted = previous.partialAttempted || outcome.partialResult === true
     // The bounded partial already ran, this overflow was expected to be the
-    // partial but did not declare itself, or no recovery is wired: terminal.
+    // partial but did not declare itself, or no recovery is wired: the wake
+    // is past its recovery budget — exhaust it durably (Maka #5780).
     if (partialAttempted || previous.compactAttempted || this.onCompact === undefined) {
-      this.overflowRecovery.set(wake.wakeId, {
-        compactAttempted: previous.compactAttempted,
-        partialAttempted,
-        exhausted: true,
-      })
-      this.rearm.delete(wake.wakeId)
-      this.armTimer()
+      await this.exhaust(wake, outcome)
       return
     }
     const state: OverflowRecovery = { compactAttempted: true, partialAttempted: false, exhausted: false }
@@ -358,9 +389,7 @@ export class GraphWakeRuntime {
       await this.onCompact(wake.rootSessionId)
     } catch (error: unknown) {
       this.report(wake.rootSessionId, error)
-      this.overflowRecovery.set(wake.wakeId, { ...state, exhausted: true })
-      this.rearm.delete(wake.wakeId)
-      this.armTimer()
+      await this.exhaust(wake, outcome)
       return
     }
     this.rearm.set(wake.wakeId, { at: this.now(), rootSessionId: wake.rootSessionId })

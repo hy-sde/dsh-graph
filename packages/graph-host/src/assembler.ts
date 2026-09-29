@@ -6,6 +6,10 @@
 
 import { randomUUID } from 'node:crypto'
 import {
+  CONTEXT_WINDOW_EXCEEDED_CODE,
+  isContextWindowExceededError,
+} from '@deepseek-ai/dsh-llm'
+import {
   GraphControlStore,
   type AgentGraphScheduleUpdateRequest,
 } from '@hy-sde-org/dsh-graph-control'
@@ -105,13 +109,32 @@ export class GraphHostContextOverflowError extends Error {
 /** True when a failure is a provider-confirmed context overflow (owned marker or conventional property). */
 export { OncePerClaimGraphExecutor }
 
+/**
+ * Provider-confirmed context overflow: the owned marker, the conventional
+ * `overflow === true` property, or the harness LLM classifier (structured
+ * code `CONTEXT_WINDOW_EXCEEDED` or provider wording, e.g. Kimi's
+ * model-qualified token limit — Maka #5780).
+ */
 export function isContextOverflow(error: unknown): boolean {
   if (error instanceof GraphHostContextOverflowError) return true
-  return (
+  if (
     typeof error === 'object' &&
     error !== null &&
     'overflow' in error &&
     error.overflow === true
+  ) {
+    return true
+  }
+  if (isHarnessErrorWithCode(error, CONTEXT_WINDOW_EXCEEDED_CODE)) return true
+  return isContextWindowExceededError(renderError(error))
+}
+
+function isHarnessErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
   )
 }
 

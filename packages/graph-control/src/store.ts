@@ -533,7 +533,9 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
 
   /**
    * Begin one delivery attempt. Acquire is refused once the wake is delivered
-   * or superseded; retrying the same attempt returns the existing attempt.
+   * or superseded, when a durable attempt ceiling is given and the wake already
+   * reached it, and when the wake is exhausted (terminal). Retrying the same
+   * attempt returns the existing attempt.
    */
   beginSupervisorWakeAttempt(request: BeginAgentGraphSupervisorWakeAttemptRequest): Promise<{
     wake: AgentGraphSupervisorWakeRecord
@@ -550,8 +552,19 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
       if (existingAttempt !== undefined) {
         return { wake, attempt: existingAttempt, acquired: false }
       }
-      if (wake.status === 'delivered' || wake.status === 'superseded') {
+      if (isSupervisorWakeTerminal(wake.status)) {
         return { wake, acquired: false }
+      }
+      if (request.maxAttempts !== undefined) {
+        if (!Number.isSafeInteger(request.maxAttempts) || request.maxAttempts < 1) {
+          throw new GraphControlError(
+            'malformed-state',
+            `agent graph ${request.graphId}: wake ${request.wakeId} max attempts must be a positive safe integer`,
+          )
+        }
+        if (wake.attemptCount >= request.maxAttempts) {
+          return { wake, acquired: false }
+        }
       }
       const now = Date.now()
       const attempt: AgentGraphSupervisorWakeAttemptRecord = {
@@ -596,15 +609,62 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
         completedAt: now,
         ...(request.failureReason !== undefined ? { failureReason: request.failureReason } : {}),
       }
+      // Maka keeps the last failure reason on the wake row so a later durable
+      // exhaustion can carry it; cleared for statuses that are not failures.
+      const wakeFailureReason =
+        request.status === 'retryable_failed' || request.status === 'superseded'
+          ? request.failureReason
+          : undefined
+      const base: AgentGraphSupervisorWakeRecord = wakeFailureReason === undefined
+        ? (({ failureReason: _cleared, ...rest }) => rest)(wake)
+        : wake
       const updated: AgentGraphSupervisorWakeRecord = {
-        ...wake,
+        ...base,
         status: request.status,
+        ...(wakeFailureReason !== undefined ? { failureReason: wakeFailureReason } : {}),
         updatedAt: now,
       }
       this.attempts.set(key, updatedAttempt)
       this.wakes.set(request.wakeId, updated)
       await this.put('wake_attempts', key, updatedAttempt)
       await this.put('wakes', request.wakeId, updated)
+      return updated
+    })
+  }
+
+  /**
+   * Terminal exhaustion: a wake that exhausted its delivery attempts is marked
+   * `exhausted` with the failure reason. Idempotent for an already-exhausted
+   * wake; throws `wake-conflict` for any other status (an exhausted wake must
+   * be re-claimed, not re-delivered). Maka keeps `exhausted` out of supersede.
+   */
+  exhaustSupervisorWake(graphId: string, wakeId: string, reason: string): Promise<AgentGraphSupervisorWakeRecord> {
+    return this.locked(async () => {
+      if (reason.trim().length === 0 || reason.length > 4000) {
+        throw new GraphControlError(
+          'malformed-state',
+          `agent graph ${graphId}: wake ${wakeId} exhaustion reason must be non-empty and at most 4000 characters`,
+        )
+      }
+      const wake = this.wakes.get(wakeId)
+      if (wake === undefined) {
+        throw new GraphControlError('wake-not-found', `agent graph ${graphId}: wake ${wakeId} not found`)
+      }
+      if (wake.status === 'exhausted') return wake
+      if (wake.status !== 'retryable_failed') {
+        throw new GraphControlError(
+          'wake-conflict',
+          `agent graph ${graphId}: wake ${wakeId} is ${wake.status}, not retryable_failed; cannot exhaust`,
+        )
+      }
+      const updated: AgentGraphSupervisorWakeRecord = {
+        ...wake,
+        status: 'exhausted',
+        failureReason: reason,
+        updatedAt: Date.now(),
+      }
+      this.wakes.set(wakeId, updated)
+      await this.put('wakes', wakeId, updated)
       return updated
     })
   }
@@ -616,7 +676,7 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
       let changed = 0
       for (const wake of [...this.wakes.values()]) {
         if (!rootSet.has(wake.rootSessionId)) continue
-        if (wake.status === 'delivered' || wake.status === 'superseded') continue
+        if (isSupervisorWakeTerminal(wake.status)) continue
         if (graphSet !== undefined && !graphSet.has(wake.graphId)) continue
         const updated: AgentGraphSupervisorWakeRecord = {
           ...wake,
@@ -684,4 +744,9 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
 
 function isUnsettled(status: AgentGraphSupervisorWakeStatus): boolean {
   return status === 'pending' || status === 'running' || status === 'waiting_permission' || status === 'retryable_failed'
+}
+
+/** Terminal statuses: no delivery may re-claim, supersede, or re-drive them. */
+export function isSupervisorWakeTerminal(status: AgentGraphSupervisorWakeStatus): boolean {
+  return status === 'delivered' || status === 'superseded' || status === 'exhausted'
 }

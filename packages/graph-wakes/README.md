@@ -44,7 +44,7 @@ await runtime.stop() // unsubscribe, cancel timers, await the in-flight sweep
 
 ```ts
 // Accessors
-await runtime.pendingWakes('graph_g1') // pending + retryable wakes (terminal exhausted included)
+await runtime.pendingWakes('graph_g1') // pending + retryable wakes (terminal statuses excluded)
 await runtime.wakeStatus('graph_wake_abc') // durable row, any status
 ```
 
@@ -67,7 +67,7 @@ For every due wake the runtime calls the store's `beginSupervisorWakeAttempt` wi
 
 ### Retries, backoff, and terminal failure
 
-A `retryable_failed` outcome re-arms the wake at `outcome.nextAttemptAt` or `now + 30 s × attemptNumber` (defaults: `DEFAULT_RETRY_BACKOFF_MS`, `DEFAULT_MAX_DELIVERY_ATTEMPTS = 3`); the re-arm is process-local and a segmented timer re-drives `handleIdle` for the owning root. Once `attemptCount` reaches `maxAttempts` the wake is terminal for this runtime — the store has no `failed` status, so the row stays `retryable_failed` at the cap and is never re-armed again.
+A `retryable_failed` outcome re-arms the wake at `outcome.nextAttemptAt` or `now + 30 s × attemptNumber` (defaults: `DEFAULT_RETRY_BACKOFF_MS`, `DEFAULT_MAX_DELIVERY_ATTEMPTS = 3`); the re-arm is process-local and a segmented timer re-drives `handleIdle` for the owning root. Once `attemptCount` reaches `maxAttempts` the runtime durably exhausts the wake (`exhausted`, with the last failure reason on the wake row): it leaves the unsettled/retryable listings, is never re-armed, and stays terminal across restarts.
 
 ### Context-overflow recovery
 
@@ -83,7 +83,7 @@ Overlapping idle signals coalesce into one serial sweep (single-flight, re-reque
 
 ### Restart durability
 
-All state the runtime needs is in the store: a fresh `GraphWakeRuntime` over the same store sees the same wake rows, re-arms orphaned `retryable_failed` wakes at the next idle (like Maka's `recover`), and refuses nothing that the attempt count still allows. Backoff timestamps and overflow markers are process-local and are deliberately not persisted.
+All state the runtime needs is in the store: a fresh `GraphWakeRuntime` over the same store sees the same wake rows, re-arms orphaned `retryable_failed` wakes at the next idle (like Maka's `recover`), and durably exhausts any at-cap retryable row rather than leaving it unsettled. Backoff timestamps and overflow markers are process-local and are deliberately not persisted.
 
 ## Further Exploration
 
@@ -100,7 +100,7 @@ No model-facing surface. This package is host-side machinery; the supervisor too
 ## Known Limitations and Deferred Work
 
 - The attempt row has no `partialResult` (or overflow) column: the one-compact/one-partial markers are process-local. A restart clears them, so one more full attempt can occur before the `attemptCount` cap stops retries; exceeding the cap is still impossible.
-- Terminal failure has no store status: exhausted wakes stay `retryable_failed` at the attempt cap. The control store's status union is fixed.
+- At the attempt cap the runtime exhausts the wake durably (`exhausted`); a crash between the last retryable completion and the exhaust call leaves the row `retryable_failed` at the cap, and the next idle sweep exhausts it.
 - `running` wakes (crash between begin and complete) are not recovered here: whether an interrupted attempt really completed is a runtime fact, and the control store's `recoverSupervisorWakes` no-op keeps that fact with the host wiring.
 - `waiting_permission` wakes are parked and never re-attempted; permission-response resumption (Maka's `notifyPermissionResponse`) is deferred to the host wiring.
 - Cross-process coordination is out of scope: like the coordinator, the runtime is process-local, so another process holding the same store does not wake this runtime.
