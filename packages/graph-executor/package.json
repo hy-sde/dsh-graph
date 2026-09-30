@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-graph-executor",
   "description": "Operator executor adapter for the Agent Graph: deterministic worktree leases, durable operator bindings, and child-run serialization with terminal record emission.",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -33,8 +33,8 @@
   "devDependencies": {
     "@hy-sde-org/dsh-graph-control": "workspace:*",
     "@hy-sde-org/dsh-graph-stream": "workspace:*",
-    "@deepseek-ai/dsh-storage": "^0.1.7-rc.2",
-    "@deepseek-ai/dsh-storage-sqlite": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-storage": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.2.0-rc.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
