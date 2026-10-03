@@ -52,6 +52,14 @@ export interface AgentGraphScheduledWork {
   readonly instruction: string
   readonly inputIds: readonly string[]
   readonly selectedResultInputs?: readonly AgentGraphSelectedResultInput[]
+  /**
+   * Replay policy of the work's dispatch (pi-durable pattern harvest). `safe`
+   * (default) re-dispatches an existing claim whose previous execution never
+   * settled (crash recovery). `confirm` defers instead — reason
+   * `replay_confirm_required` — until a supervisor re-arms the claim through
+   * the store's rearm primitive (dangerous steps never silently re-run).
+   */
+  readonly replay?: 'safe' | 'confirm'
   /** Work this item supersedes (the superseded work keeps its durable row). */
   readonly replaces?: string
   readonly replacementMode?: 'none' | 'replace'
@@ -59,6 +67,13 @@ export interface AgentGraphScheduledWork {
 
 /** Stop a work item or an activation. */
 export interface AgentGraphScheduleStop {
+  /**
+   * Ownership-tree abort (pi-durable pattern harvest): also stop every work
+   * downstream of this target (provisioned-edge closure), dependents first,
+   * so a stopped parent cannot orphan a still-burning wave. Default `false`
+   * keeps Maka's single-target semantics.
+   */
+  readonly cascadeDownstream?: boolean
   readonly targetId: string
   readonly reason: string
 }

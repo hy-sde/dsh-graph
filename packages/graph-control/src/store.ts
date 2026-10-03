@@ -398,6 +398,29 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
       return { state: 'cancelled', previousState: claim.admissionStatus, changed: true }
     })
   }
+ /**
+  * Replay-confirm primitive (pi-durable pattern harvest): a supervisor's
+  * explicit consent to re-run work whose claim was left `executing` by a dead
+  * process. `executing → claimed` so the next reconcile re-dispatches it;
+  * idempotent no-op for already-`claimed` claims; a cancelled claim never
+  * re-arms (an explicit stop stays a stop).
+  */
+ rearmAgentGraphIntentForReplay(graphId: string, intentId: string): Promise<AgentGraphIntentAdmissionTransition> {
+   return this.locked(async () => {
+     const claim = this.claims.get(claimKey(graphId, intentId))
+     if (claim === undefined) {
+       throw new GraphControlError('intent-not-found', `agent graph ${graphId}: intent ${intentId} has no durable claim`)
+     }
+     if (claim.admissionStatus !== 'executing') {
+       return { state: claim.admissionStatus, previousState: claim.admissionStatus, changed: false }
+     }
+     const updated: AgentGraphIntentClaimRecord = { ...claim, admissionStatus: 'claimed' }
+     this.claims.set(claimKey(graphId, intentId), updated)
+     this.#patchClaimsByGraph(updated)
+     await this.put('claims', claimKey(graphId, intentId), updated)
+     return { state: 'claimed', previousState: 'executing', changed: true }
+   })
+ }
 
   /* ------------------------- operator provisions ---------------------- */
 

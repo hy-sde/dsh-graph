@@ -19,6 +19,7 @@ import {
   graphUpdateId,
   graphWakeId,
   type AgentGraphIntentClaimRecord,
+  type AgentGraphIntentAdmissionTransition,
 } from '@hy-sde-org/dsh-graph-control'
 import {
   AgentGraphCoordinator,
@@ -298,6 +299,18 @@ export class AgentGraphController {
       stop: [target],
     }
     return this.schedule(graphId, request)
+  }
+
+  /**
+   * Replay-confirm (pi-durable pattern harvest): re-arm a claim an older
+   * process left `executing`, then re-drive. `replay: 'confirm'` work defers
+   * its crash replay until this is called; a claim that is not `executing`
+   * re-arms nothing (changed=false) and a cancelled claim stays cancelled.
+   */
+  async confirmReplay(graphId: string, intentId: string): Promise<AgentGraphIntentAdmissionTransition> {
+    const transition = await this.store.rearmAgentGraphIntentForReplay(graphId, intentId)
+    await this.getOrCreate(graphId).reconcileAndWait()
+    return transition
   }
 
   private async readProjection(graphId: string): Promise<AgentGraphScheduleProjection> {

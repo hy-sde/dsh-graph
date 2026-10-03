@@ -417,6 +417,8 @@ export async function applyScheduleStops(
 ): Promise<{
   stops: AgentGraphScheduleStopResult[]
   failures: { phase: string; targetId: string; error: unknown }[]
+  /** Every work reachable downstream of a `cascadeDownstream` stop, by hop depth. */
+  cascade: Map<string, number>
 }> {
   const requests = new Map<string, string>()
   for (const stopped of snapshot.schedule.stoppedTargets) {
@@ -427,13 +429,25 @@ export async function applyScheduleStops(
       requests.set(work.replaces, `Superseded by graph work ${work.workId}`)
     }
   }
+  // Ownership-tree abort (pi-durable pattern harvest): expand
+  // `cascadeDownstream` stops to every work downstream of the target
+  // (provisioned-edge closure). Already-requested targets keep their own
+  // reason; returned depths order the wave dependents-first.
+  const cascade = expandCascadeDownstream(snapshot)
+  for (const [workId, reason] of cascade.reasons) {
+    if (!requests.has(workId)) requests.set(workId, reason)
+  }
   const workById = new Map(
     snapshot.schedule.work.map(work => [work.workId, work]),
   )
   const claimsByIntent = new Map(
     snapshot.claims.map(claim => [claim.intentId, claim]),
   )
-  const sortedTargets = [...requests.keys()].sort(compareAgentGraphIdentity)
+  const sortedTargets = [...requests.keys()].sort(
+    (a, b) =>
+      (cascade.depths.get(b) ?? 0) - (cascade.depths.get(a) ?? 0) ||
+      compareAgentGraphIdentity(a, b),
+  )
   const stops: AgentGraphScheduleStopResult[] = []
   const failures: { phase: string; targetId: string; error: unknown }[] = []
   const pendingBySession = new Map<
@@ -535,7 +549,75 @@ export async function applyScheduleStops(
         failures.push({ phase: 'stop', targetId: target.targetId, error })
     }
   }
-  return { stops, failures }
+  return { stops, failures, cascade: cascade.depths }
+}
+
+/**
+ * Expand `cascadeDownstream` stops (pi-durable ownership-tree harvest): every
+ * work whose operator is reachable from a stopped target's operator through
+ * provisioned edges is cascade-stopped. Returns each reached work's hop depth
+ * from its cascade root (so the stop wave aborts dependents before their
+ * ancestors, bottom-up like pi-durable's ownership aborts) and the cascade
+ * reason per reached work.
+ */
+function expandCascadeDownstream(
+  snapshot: AgentGraphScheduleSnapshot,
+): { depths: Map<string, number>; reasons: Map<string, string> } {
+  const operatorToWork = new Map<string, string>()
+  for (const provision of snapshot.provisions) {
+    operatorToWork.set(provision.operatorId, provision.workId)
+  }
+  for (const work of snapshot.schedule.work) {
+    if (work.target.kind === 'operator') operatorToWork.set(work.target.id, work.workId)
+  }
+  const edgesByFrom = new Map<string, { edgeId: string; fromOperatorId: string; toOperatorId: string }[]>()
+  for (const edge of snapshot.topology.edges) {
+    const list = edgesByFrom.get(edge.fromOperatorId) ?? []
+    list.push(edge)
+    edgesByFrom.set(edge.fromOperatorId, list)
+  }
+  const depths = new Map<string, number>()
+  const reasons = new Map<string, string>()
+  const cascadeRoots = new Map<string, string>()
+  for (const update of snapshot.updates) {
+    for (const stop of update.stop) {
+      if (stop.cascadeDownstream === true) cascadeRoots.set(stop.targetId, stop.reason)
+    }
+  }
+  for (const [targetId, reason] of cascadeRoots) {
+    const rootOperator = cascadeRootOperator(targetId, snapshot)
+    if (rootOperator === undefined) continue
+    const frontier: { operatorId: string; depth: number }[] = [{ operatorId: rootOperator, depth: 0 }]
+    const seen = new Set<string>([rootOperator])
+    for (;;) {
+      const current = frontier.shift()
+      if (current === undefined) break
+      for (const edge of edgesByFrom.get(current.operatorId) ?? []) {
+        if (seen.has(edge.toOperatorId)) continue
+        seen.add(edge.toOperatorId)
+        const downstreamWorkId = operatorToWork.get(edge.toOperatorId)
+        const depth = current.depth + 1
+        if (downstreamWorkId !== undefined) {
+          depths.set(downstreamWorkId, Math.max(depths.get(downstreamWorkId) ?? 0, depth))
+          reasons.set(downstreamWorkId, `${reason} (cascade)`)
+        }
+        frontier.push({ operatorId: edge.toOperatorId, depth })
+      }
+    }
+  }
+  return { depths, reasons }
+}
+
+/** Operator identity that executes one stopped work (provision or operator-targeted). */
+function cascadeRootOperator(
+  workId: string,
+  snapshot: AgentGraphScheduleSnapshot,
+): string | undefined {
+  const provision = snapshot.provisions.find(item => item.workId === workId)
+  if (provision !== undefined) return provision.operatorId
+  const work = snapshot.schedule.work.find(item => item.workId === workId)
+  if (work !== undefined && work.target.kind === 'operator') return work.target.id
+  return undefined
 }
 
 /* ------------------------------ dispatch ------------------------------ */
@@ -684,6 +766,7 @@ export async function reconcileAgentGraphSchedule(
       }
       if (work.target.kind === 'operator') continue
       if (provisionsByWork.has(work.workId)) continue
+      if (stopWave.cascade.has(work.workId)) continue
       const missing = missingWorkInputIds(work, snapshot)
       if (missing.length > 0) {
         deferredWork.push({
@@ -755,6 +838,7 @@ export async function reconcileAgentGraphSchedule(
       // already recorded for it in phase A).
       if (work.target.kind !== 'operator' && !provisionsByWork.has(work.workId))
         continue
+      if (stopWave.cascade.has(work.workId)) continue
       let intent: AgentGraphRunnableIntent
       const provisionForWork = provisionsByWork.get(work.workId)
       try {
@@ -785,6 +869,26 @@ export async function reconcileAgentGraphSchedule(
           missingInputIds: missing,
         })
         continue
+      }
+      // Replay-confirm gate (pi-durable pattern harvest): an `executing`
+      // claim with no terminal record from its operator is a dead process's
+      // unsettled claim (drives are serialized per graph), i.e. a crash
+      // replay. `replay: 'safe'` (default) re-dispatches per Maka
+      // exactly-once admission; `confirm` defers until a supervisor re-arms
+      // the claim. A settled claim's re-dispatch is harmless and stays 'safe'.
+      const existingClaim = claimsByIntent.get(intent.intentId)
+      if (
+        existingClaim !== undefined &&
+        existingClaim.admissionStatus === 'executing' &&
+        (work.replay ?? 'safe') === 'confirm'
+      ) {
+        const settled = snapshot.observation.records.some(
+          record => record.operatorId === intent.operatorId && record.facets.includes('terminal'),
+        )
+        if (!settled) {
+          deferredWork.push({ workId: work.workId, reason: 'replay_confirm_required' })
+          continue
+        }
       }
       candidates.push({ work, intent, existing })
     }

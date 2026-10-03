@@ -19,6 +19,7 @@ import {
 } from '../src/handoff.ts'
 import {
   reconcileAgentGraphSchedule,
+  scheduledWorkIntentId,
   type AgentGraphReconcileSeams,
 } from '../src/reconcile.ts'
 import { AgentGraphCoordinator } from '../src/coordinator.ts'
@@ -178,9 +179,9 @@ function baseUpdate() {
       target: { kind: 'agent'; id: string } | { kind: 'operator'; id: string }
       instruction: string
       inputIds: string[]
-      replaces?: string
+      replay?: 'safe' | 'confirm'
     }[],
-    stop: [] as { targetId: string; reason: string }[],
+    stop: [] as { targetId: string; reason: string; cascadeDownstream?: boolean }[],
   }
 }
 
@@ -191,6 +192,7 @@ function work(
     instruction: string
     inputIds: string[]
     replaces?: string
+    replay?: 'safe' | 'confirm'
   }> = {},
 ) {
   return {
@@ -201,6 +203,7 @@ function work(
     ...(overrides.replaces !== undefined
       ? { replaces: overrides.replaces }
       : {}),
+    ...(overrides.replay !== undefined ? { replay: overrides.replay } : {}),
   }
 }
 
@@ -410,6 +413,166 @@ describe('AgentGraphCoordinator', () => {
     expect(env.executor.runCount).toBe(1) // fresh executor observed the existing run (no new claim created)
     const claims = await env.store.listAgentGraphIntentClaims(GRAPH)
     expect(claims.filter(claim => claim.graphId === GRAPH)).toHaveLength(1)
+    await env.backend.close()
+  })
+  it('defers replay-confirm work after a crashed run until re-armed, and re-dispatches safe work', async () => {
+    const env = await setup(tmpPath())
+    let crashedRuns = 0
+    const crashExecutor: AgentGraphExecutor = {
+      provisionOperator: request => env.store.provisionOperator(request),
+      runClaimedAgentGraphIntent: async input => {
+        if (input.admitExecution !== undefined) await input.admitExecution()
+        crashedRuns += 1
+        throw new Error('simulated crash')
+      },
+      stopSession: async () => {},
+    }
+    await env.store.commitScheduleUpdate(
+      updateRequest({ addWork: [work('w1', { replay: 'confirm' })] }),
+    )
+    // The first drive crashes after admission: the claim stays `executing`
+    // with no terminal record from its operator.
+    const failed = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+      executor: crashExecutor,
+    })
+    expect(failed.failures).toContainEqual(
+      expect.objectContaining({ phase: 'dispatch', workId: 'w1' }),
+    )
+    expect(crashedRuns).toBe(1)
+    expect(
+      (
+        await env.store.readAgentGraphIntentClaim(
+          GRAPH,
+          scheduledWorkIntentId(GRAPH, 'w1'),
+        )
+      )?.admissionStatus,
+    ).toBe('executing')
+
+    // Crash replay: `confirm` defers the unsettled claim instead of
+    // re-dispatching it (pi-durable `replay: 'confirm'` harvest).
+    const deferred = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+    })
+    expect(deferred.deferred).toContainEqual({
+      workId: 'w1',
+      reason: 'replay_confirm_required',
+    })
+    expect(env.executor.runCount).toBe(0)
+
+    // Supervisor confirms the replay: re-arm re-opens admission and the
+    // work dispatches normally.
+    await env.store.rearmAgentGraphIntentForReplay(
+      GRAPH,
+      scheduledWorkIntentId(GRAPH, 'w1'),
+    )
+    const confirmed = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+    })
+    expect(confirmed.status).toBe('reconciled')
+    expect(confirmed.dispatches).toHaveLength(1)
+    expect(env.executor.runCount).toBe(1)
+    await env.backend.close()
+  })
+
+  it('cancels downstream dependents when a stop cascades: in-flight, unclaimed, and terminal', async () => {
+    const env = await setup(tmpPath())
+    await env.store.commitScheduleUpdate(
+      updateRequest({ addWork: [work('w1')] }),
+    )
+    const first = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+    })
+    expect(first.status).toBe('reconciled')
+    const provisions = await env.store.listOperatorProvisions(GRAPH)
+    const provision = must(provisions.find(item => item.workId === 'w1'))
+    const record1 = must(
+      env.sink.lastRecordFor(provision.operatorId, provision.targetSessionId),
+    )
+
+    // w2 is admitted by a hung executor: its claim stays `executing` with
+    // no terminal record, i.e. an in-flight dependent. Idempotent per claim
+    // (the reconcile loop re-drives after revision bumps).
+    let admitted = 0
+    const admittedClaims = new Set<string>()
+    const hangExecutor: AgentGraphExecutor = {
+      provisionOperator: request => env.store.provisionOperator(request),
+      runClaimedAgentGraphIntent: async input => {
+        if (input.admitExecution !== undefined) await input.admitExecution()
+        if (!admittedClaims.has(input.claim.claimId)) {
+          admitted += 1
+          admittedClaims.add(input.claim.claimId)
+        }
+        return []
+      },
+      stopSession: async () => {},
+    }
+    await env.store.commitScheduleUpdate(
+      updateRequest({
+        addWork: [
+          work('w2', { instruction: 'do w2', inputIds: [record1.recordId] }),
+        ],
+      }),
+    )
+    const second = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+      executor: hangExecutor,
+    })
+    expect(second.status).toBe('reconciled')
+    // Two distinct claims were admitted: w1 is re-driven by this fresh
+    // reconcile (idempotent re-admission) and w2 is admitted once.
+    expect(admitted).toBe(2)
+    expect(
+      (
+        await env.store.readAgentGraphIntentClaim(
+          GRAPH,
+          scheduledWorkIntentId(GRAPH, 'w2'),
+        )
+      )?.admissionStatus,
+    ).toBe('executing')
+
+    // Stopping the root w1 cascades downstream: the in-flight w2 claim is
+    // cancelled and its session stopped; unclaimed w3 (added in the same
+    // wave) is cancelled before ever running. The terminal root itself
+    // reports `already_terminal`.
+    await env.store.commitScheduleUpdate(
+      updateRequest({
+        addWork: [
+          work('w3', { instruction: 'do w3', inputIds: [record1.recordId] }),
+        ],
+        stop: [
+          { targetId: 'w1', reason: 'wave cancelled', cascadeDownstream: true },
+        ],
+      }),
+    )
+    const stopped = await reconcileAgentGraphSchedule({
+      ...env.seams,
+      graphId: GRAPH,
+    })
+    const stopsById = new Map(stopped.stops.map(stop => [stop.targetId, stop]))
+    expect(stopsById.get('w1')?.status).toBe('already_terminal')
+    expect(stopsById.get('w2')?.status).toBe('stopped')
+    expect(stopsById.get('w3')?.status).toBe('cancelled_before_runtime')
+    expect(stopsById.get('w2')?.reason).toContain('cascade')
+    expect(
+      (
+        await env.store.readAgentGraphIntentClaim(
+          GRAPH,
+          scheduledWorkIntentId(GRAPH, 'w2'),
+        )
+      )?.admissionStatus,
+    ).toBe('cancelled')
+    expect(
+      await env.store.readAgentGraphIntentClaim(
+        GRAPH,
+        scheduledWorkIntentId(GRAPH, 'w3'),
+      ),
+    ).toBeUndefined()
     await env.backend.close()
   })
 })

@@ -119,7 +119,9 @@ export function registerAgentGraphTools(
       + 'operatorId (existing operator); instruction is required (cleaned of surrounding whitespace). Limits: 32 work items, '
       + '64 input ids per update, 60000 instruction chars. replaces must name an existing work id from a previous view — it '
       + 'never replaces work added by the same update. finish requires no pending non-terminal work and committed result ids. '
-      + 'Pass idempotencyKey to make a retried identical update dedupe at the store.',
+      + 'Pass idempotencyKey to make a retried identical update dedupe at the store. Work items accept replay '
+      + '(confirm defers a crash-replay of an unsettled claim until re-armed) and stop entries accept '
+      + 'cascadeDownstream (also stop downstream work, dependents first).',
     parameters: {
       graphId: { type: 'string', required: true, description: 'The agent graph id to update.' },
       operation: {
@@ -158,6 +160,12 @@ export function registerAgentGraphTools(
             replaces: { type: 'string', description: 'Existing work superseded by this work item.' },
             replacementMode: { type: 'string', enum: ['none', 'replace'], description: 'none drops a provider-filled replaces.' },
             workId: { type: 'string', description: 'Optional explicit work id (normally derived deterministically).' },
+            replay: {
+              type: 'string',
+              enum: ['safe', 'confirm'],
+              description:
+                "Dispatch replay policy. 'confirm' defers re-running this work after a crash left its claim unsettled (deferred reason replay_confirm_required) until a supervisor re-arms it; 'safe' (default) re-dispatches immediately.",
+            },
           },
         },
       },
@@ -169,6 +177,11 @@ export function registerAgentGraphTools(
           properties: {
             targetId: { type: 'string', required: true },
             reason: { type: 'string', required: true },
+            cascadeDownstream: {
+              type: 'boolean',
+              description:
+                'Also stop every work downstream of this target (provisioned-edge closure), dependents first. Default false.',
+            },
           },
         },
       },

@@ -135,6 +135,7 @@ export type AgentGraphDeferredWorkKind =
   | 'graph_closed'
   | 'activation_limit'
   | 'operator_provision_unavailable'
+  | 'replay_confirm_required'
 export type AgentGraphReconcileStatus =
   'reconciled' | 'waiting' | 'limit_reached' | 'failed' | 'cancelled' | 'stale'
 export interface AgentGraphReconciliationFailure {

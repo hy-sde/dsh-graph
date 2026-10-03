@@ -65,12 +65,19 @@ export interface AgentGraphToolAddWork {
   readonly replacementMode?: 'none' | 'replace'
   /** Optional explicit work id (normally derived deterministically from the update). */
   readonly workId?: string
+  /**
+   * Replay policy of this work's dispatch (pi-durable pattern harvest):
+   * `confirm` defers the crash-replay of an unsettled claim until a
+   * supervisor re-arms it; `safe` (default) re-dispatches as before.
+   */
+  readonly replay?: 'safe' | 'confirm'
   [key: string]: unknown
 }
 
 export interface AgentGraphToolStop {
   readonly targetId: string
   readonly reason: string
+  readonly cascadeDownstream?: boolean
 }
 
 export interface AgentGraphToolFinish {
@@ -115,6 +122,7 @@ export function cleanAddWorkInput(input: AgentGraphToolAddWork): AgentGraphToolA
     instruction: input.instruction,
     ...identity,
     ...(input.replacementMode !== undefined ? { replacementMode: input.replacementMode } : {}),
+    ...(input.replay !== undefined ? { replay: input.replay } : {}),
     ...(input.replacementMode === 'none' || input.replaces === undefined
       ? {}
       : { replaces: input.replaces }),
@@ -188,6 +196,14 @@ function requireText(value: string, maxChars: number, name: string): string {
     TEXT_CONTROL_CHARS.test(value)
   ) {
     throw new AgentGraphInvalidInputError(`invalid agent graph ${name}`)
+  }
+  return value
+}
+
+/** Strict boolean for optional flags (provider-filled payloads may be any JSON). */
+function requireFlag(value: unknown, name: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new AgentGraphInvalidInputError(`invalid agent graph ${name}: expected a boolean`)
   }
   return value
 }
@@ -297,6 +313,15 @@ export function compileAddWork(
   const replaces = input.replaces === undefined
     ? undefined
     : requireIdentity(input.replaces, 'replacement target id')
+  let replay: 'safe' | 'confirm' | undefined
+  if (input.replay !== undefined) {
+    if (input.replay !== 'safe' && input.replay !== 'confirm') {
+      throw new AgentGraphInvalidInputError(
+        `graph work replay must be 'safe' or 'confirm' (got ${String(input.replay)})`,
+      )
+    }
+    replay = input.replay
+  }
   const work: AgentGraphScheduledWork = {
     workId,
     target,
@@ -304,6 +329,7 @@ export function compileAddWork(
     inputIds,
     ...(selectedResultInputs.length > 0 ? { selectedResultInputs } : {}),
     ...(replaces !== undefined ? { replaces } : {}),
+    ...(replay !== undefined ? { replay } : {}),
   }
   return { work, explicitWorkId }
 }
@@ -463,6 +489,9 @@ export function compileAgentGraphScheduleUpdate(input: {
     .map(entry => ({
       targetId: requireIdentity(entry.targetId, 'stop target id'),
       reason: requireText(entry.reason.trim(), MAX_SCHEDULE_REASON_CHARS, 'stop reason'),
+      ...(entry.cascadeDownstream === undefined
+        ? entry.cascadeDownstream
+        : { cascadeDownstream: requireFlag(entry.cascadeDownstream, 'cascadeDownstream') }),
     }))
     .sort((a, b) => compareIdentity(a.targetId, b.targetId))
   ensureUnique(stop.map(entry => entry.targetId), 'stop target id')

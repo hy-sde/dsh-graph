@@ -70,3 +70,9 @@ export {
   graphWakeId,
   graphWakeAttemptId,
 } from './types.ts'
+
+export {
+  assertGraphControlStoreConformance,
+  graphControlStoreConformanceChecks,
+  type GraphControlStoreConformanceCheck,
+} from './conformance.ts'
