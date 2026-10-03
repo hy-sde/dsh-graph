@@ -7,8 +7,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hy-sde/dsh-plugins.git",
-    "directory": "dsh-graph/packages/graph-host"
+    "url": "git+https://github.com/hy-sde/dsh-graph.git",
+    "directory": "packages/graph-host"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -74,5 +74,9 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepack": "pnpm run clean && pnpm run build"
+  },
+  "homepage": "https://github.com/hy-sde/dsh-graph#readme",
+  "bugs": {
+    "url": "https://github.com/hy-sde/dsh-graph/issues"
   }
 }
