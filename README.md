@@ -69,7 +69,7 @@ git clone git@github.com:hy-sde/dsh-plugins.git
 cd dsh-plugins/dsh-graph
 pnpm install
 for pkg in graph-host tool-graph graph-projection; do
-  (cd packages/$pkg && PACKAGE_TARBALL="$(pnpm pack --silent)" && dsh plugin --profile web add "$PWD/$PACKAGE_TARBALL")
+  (cd packages/$pkg && PACKAGE_TARBALL="$(pnpm pack | tail -n 1)" && dsh plugin --profile web add "$PWD/$PACKAGE_TARBALL")
 done
 ```
 
@@ -118,6 +118,11 @@ dsh web
 In the graph root session, ask the agent to plan work: `update_agent_graph` commits one durable decision per call (add work via `targetKind`, stop targets, or finish with committed result ids; `idempotencyKey` makes retries safe), and `yield_agent_graph` ends the supervisor turn while the graph drives operator children. The host wakes the session at the next durable checkpoint; `view_agent_graph` shows the bounded schedule — work statuses, truncated record summaries, readiness intents, explicit `omitted` counts.
 
 ### Uninstall
+
+This group ships no bundle row — the graph-host row (host composition) and the
+`dsh-tool-graph` / `dsh-graph-projection` rows (agent preset) were added by
+hand, so `dsh plugin remove` does not touch them. Remove those rows first,
+then:
 
 ```bash
 dsh plugin --profile web remove @hy-sde-org/dsh-graph-host
