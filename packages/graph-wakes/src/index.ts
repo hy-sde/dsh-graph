@@ -10,4 +10,5 @@ export {
   DEFAULT_RETRY_BACKOFF_MS,
   GraphWakeRuntime,
   MAX_TIMER_DELAY_MS,
+  nextWakeOccurrenceId,
 } from './runtime.ts'

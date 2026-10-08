@@ -46,6 +46,7 @@ import type {
   BeginAgentGraphSupervisorWakeAttemptRequest,
   ClaimAgentGraphSupervisorWakeRequest,
   CompleteAgentGraphSupervisorWakeAttemptRequest,
+  ScheduleAgentGraphSupervisorWakeRequest,
   SupersedeAgentGraphSupervisorWakesRequest,
 } from './types.ts'
 
@@ -547,6 +548,54 @@ export class GraphControlStore {  /** The unit descriptor callers open with `sto
         attemptCount: 0,
         createdAt: now,
         updatedAt: now,
+      }
+      this.wakes.set(wake.wakeId, wake)
+      await this.put('wakes', wake.wakeId, wake)
+      return { wake, created: true }
+    })
+  }
+
+  /**
+   * Claim-style scheduling of a supervisor wake: exactly-once upsert keyed by
+   * `wakeId`. An existing wake with the same id — whatever its status — is
+   * returned unchanged with `created: false`, so a retried or restarted
+   * scheduler never rewrites a claimed row; the runtime's occurrence scheme
+   * (`${baseWakeId}#occurrence-${n}`) owns a distinct id per chain position.
+   * Unlike {@link claimSupervisorWake}, the row carries an epoch-ms `dueAt`
+   * the wake runtime withholds delivery until, plus an optional `recurMs`
+   * the runtime uses to schedule the next occurrence after a delivery.
+   * Persisted through the same `wakes` write chain as claims.
+   */
+  scheduleSupervisorWake(
+    request: ScheduleAgentGraphSupervisorWakeRequest,
+  ): Promise<{ wake: AgentGraphSupervisorWakeRecord; created: boolean }> {
+    return this.locked(async () => {
+      if (!Number.isSafeInteger(request.dueAt) || request.dueAt < 0) {
+        throw new GraphControlError(
+          'malformed-state',
+          `agent graph ${request.graphId}: wake ${request.wakeId} dueAt must be a non-negative safe integer`,
+        )
+      }
+      if (request.recurMs !== undefined && (!Number.isSafeInteger(request.recurMs) || request.recurMs < 1)) {
+        throw new GraphControlError(
+          'malformed-state',
+          `agent graph ${request.graphId}: wake ${request.wakeId} recurMs must be a positive safe integer`,
+        )
+      }
+      const existing = this.wakes.get(request.wakeId)
+      if (existing !== undefined) return { wake: existing, created: false }
+      const now = Date.now()
+      const wake: AgentGraphSupervisorWakeRecord = {
+        wakeId: request.wakeId,
+        graphId: request.graphId,
+        snapshotVersion: request.snapshotVersion,
+        rootSessionId: request.rootSessionId,
+        status: 'pending',
+        attemptCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        dueAt: request.dueAt,
+        ...(request.recurMs !== undefined ? { recurMs: request.recurMs } : {}),
       }
       this.wakes.set(wake.wakeId, wake)
       await this.put('wakes', wake.wakeId, wake)

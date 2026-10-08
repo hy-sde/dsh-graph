@@ -29,6 +29,23 @@ export const DEFAULT_MAX_DELIVERY_ATTEMPTS = 3
 /** Default re-arm base for a retryable failure: 30 s times the attempt number. */
 export const DEFAULT_RETRY_BACKOFF_MS = 30_000
 
+/** The `${baseWakeId}#occurrence-${n}` suffix scheme (occurrence 0 is the unsuffixed base id). */
+const WAKE_OCCURRENCE_PATTERN = /^(.*)#occurrence-(\d+)$/
+
+/**
+ * Deterministic next-occurrence id of a recurring wake: the base wakeId is
+ * occurrence 0, so the first recurrence is `${baseWakeId}#occurrence-1` and
+ * every later occurrence increments `n`. Nothing else is embedded — the chain
+ * position is the entire suffix, which keeps ids durable and replay-stable.
+ * @param wakeId - the wake id of the occurrence just delivered.
+ * @returns the wake id of the next occurrence.
+ */
+export function nextWakeOccurrenceId(wakeId: string): string {
+  const match = WAKE_OCCURRENCE_PATTERN.exec(wakeId)
+  if (match === null) return `${wakeId}#occurrence-1`
+  return `${match[1]}#occurrence-${Number(match[2]) + 1}`
+}
+
 /** One process-local re-arm: when a retryable wake may be attempted again. */
 interface RearmEntry {
   readonly at: number
@@ -252,6 +269,9 @@ export class GraphWakeRuntime {
   private isDue(wake: AgentGraphSupervisorWakeRecord, sessionScope: string | undefined): boolean {
     if (sessionScope !== undefined && wake.rootSessionId !== sessionScope) return false
     if (this.rootSessionId !== undefined && wake.rootSessionId !== this.rootSessionId) return false
+    // A scheduled wake stays invisible to the sweep until its due time (and
+    // gains no attempt row); undefined dueAt is immediately due.
+    if (wake.dueAt !== undefined && wake.dueAt > this.now()) return false
     if (wake.status === 'pending') return true
     if (wake.status !== 'retryable_failed') return false
     // At-cap retryable wakes stay due so delivery can exhaust them durably
@@ -322,7 +342,7 @@ export class GraphWakeRuntime {
   ): Promise<void> {
     const status = completeStatus(outcome.kind)
     const reason = this.failureReason(outcome, status)
-    await this.store.completeSupervisorWakeAttempt({
+    const settled = await this.store.completeSupervisorWakeAttempt({
       graphId: wake.graphId,
       wakeId: wake.wakeId,
       attemptId,
@@ -331,6 +351,7 @@ export class GraphWakeRuntime {
     })
     if (status !== 'retryable_failed') {
       this.forget(wake.wakeId)
+      if (status === 'delivered') await this.scheduleRecurrence(settled)
       return
     }
     const attemptCount = wake.attemptCount + 1
@@ -347,6 +368,39 @@ export class GraphWakeRuntime {
     const at = outcome.nextAttemptAt ?? this.now() + DEFAULT_RETRY_BACKOFF_MS * attemptCount
     this.rearm.set(wake.wakeId, { at, rootSessionId: wake.rootSessionId })
     this.armTimer()
+  }
+
+  /**
+   * Schedule the next occurrence of a delivered recurring wake: exactly-once
+   * through the store's claim-style upsert, with `dueAt = now + recurMs` and
+   * the deterministic `${baseWakeId}#occurrence-${n}` id. Durable, so a
+   * restart resumes the chain instead of duplicating it; the segmented
+   * re-arm timer re-drives the sweep at the new due time. Superseded,
+   * stopped, and closed graphs never reach here — only a `delivered`
+   * settlement schedules a recurrence, and the next occurrence's own sweep
+   * re-checks stop suppression before delivering.
+   */
+  private async scheduleRecurrence(wake: AgentGraphSupervisorWakeRecord): Promise<void> {
+    const recurMs = wake.recurMs
+    if (recurMs === undefined) return
+    const dueAt = this.now() + recurMs
+    try {
+      const { wake: next, created } = await this.store.scheduleSupervisorWake({
+        graphId: wake.graphId,
+        wakeId: nextWakeOccurrenceId(wake.wakeId),
+        snapshotVersion: wake.snapshotVersion,
+        rootSessionId: wake.rootSessionId,
+        dueAt,
+        recurMs,
+      })
+      if (!created) return
+      this.rearm.set(next.wakeId, { at: dueAt, rootSessionId: next.rootSessionId })
+      this.armTimer()
+    } catch (error: unknown) {
+      // The delivered occurrence stays settled; a failed recurrence write
+      // ends the chain and is surfaced through onError for host recovery.
+      this.report(wake.rootSessionId, error)
+    }
   }
 
   /**

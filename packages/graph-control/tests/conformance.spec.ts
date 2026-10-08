@@ -46,7 +46,7 @@ describe('graph-control store conformance', () => {
 
   it('exposes the complete named check list', () => {
     const names = graphControlStoreConformanceChecks().map(check => check.name)
-    expect(names).toHaveLength(14)
-    expect(new Set(names).size).toBe(14)
+    expect(names).toHaveLength(16)
+    expect(new Set(names).size).toBe(16)
   })
 })

@@ -8,12 +8,15 @@ import {
   AgentGraphScheduleClosedError,
   AgentGraphScheduleRevisionConflictError,
   GraphControlStore,
+  scheduleSupervisorWakeConformanceChecks,
 } from '../src/index.ts'
 import type {
+  AgentGraphControlSnapshot,
   AgentGraphIntentClaimRequest,
   AgentGraphOperatorProvisionRequest,
   AgentGraphScheduleUpdateRequest,
   AgentGraphScheduleUpdateSource,
+  AgentGraphSupervisorWakeRecord,
 } from '../src/index.ts'
 
 /** Ported semantics of Maka's storage specs (agent-graph-{schedule-updates,intent-claims,supervisor-wakes,epochs}) over DSH's KvUnit. */
@@ -104,6 +107,27 @@ function provisionRequest(overrides: Partial<AgentGraphOperatorProvisionRequest>
     expectedScheduleRevision: 1,
     ...overrides,
   }
+}
+
+/* ------------------- scheduling conformance fakes ---------------------- */
+
+/** A minimal wake row in the shape the conformance checks observe. */
+function conformanceRow(overrides: Partial<AgentGraphSupervisorWakeRecord> = {}): AgentGraphSupervisorWakeRecord {
+  return {
+    wakeId: 'graph_wake_conformance',
+    graphId: 'graph_conformance',
+    snapshotVersion: 'conformance',
+    rootSessionId: 'graph_conformance_root',
+    status: 'pending',
+    attemptCount: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  }
+}
+
+function emptySnapshot(): AgentGraphControlSnapshot {
+  return { scheduleUpdates: [], intentClaims: [], operatorProvisions: [], operatorBindings: [], supervisorWakes: [] }
 }
 
 /* --------------------------- schedule updates ------------------------- */
@@ -472,6 +496,134 @@ describe('supervisor wakes', () => {
     expect(changed).toBe(1)
     expect((await store.readSupervisorWake(GRAPH, WAKE.wakeId))?.status).toBe('exhausted')
     expect((await store.readSupervisorWake(GRAPH, 'graph_wake_2'))?.status).toBe('superseded')
+  })
+})
+
+/* -------------------------- scheduled wakes --------------------------- */
+
+describe('scheduled wakes', () => {
+  const SCHEDULE = {
+    graphId: GRAPH,
+    wakeId: 'graph_wake_scheduled',
+    snapshotVersion: 'rev-3',
+    rootSessionId: 'root-1',
+  }
+
+  it('persists dueAt/recurMs through the wakes chain and the snapshot', async () => {
+    const store = await openStore(await freshPath())
+    const { wake, created } = await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 5_000, recurMs: 60_000 })
+    expect(created).toBe(true)
+    expect(wake).toMatchObject({ status: 'pending', attemptCount: 0, dueAt: 5_000, recurMs: 60_000 })
+    expect(await store.readSupervisorWake(GRAPH, SCHEDULE.wakeId)).toMatchObject({ dueAt: 5_000, recurMs: 60_000 })
+    const snapshot = await store.snapshot()
+    expect(snapshot.supervisorWakes.find(wake => wake.wakeId === SCHEDULE.wakeId)).toMatchObject({
+      dueAt: 5_000,
+      recurMs: 60_000,
+    })
+    await store.close()
+  })
+
+  it('keeps a recurring schedule durable across reopen', async () => {
+    const path = await freshPath()
+    const store = await openStore(path)
+    await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 5_000, recurMs: 60_000 })
+    await store.close()
+    const reopened = await openStore(path)
+    expect(await reopened.readSupervisorWake(GRAPH, SCHEDULE.wakeId)).toMatchObject({
+      status: 'pending',
+      dueAt: 5_000,
+      recurMs: 60_000,
+    })
+    await reopened.close()
+  })
+
+  it('re-schedules exactly-once: the same wakeId returns the row unchanged', async () => {
+    const store = await openStore(await freshPath())
+    const first = await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 5_000, recurMs: 60_000 })
+    const replay = await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 5_000, recurMs: 60_000 })
+    expect(replay.created).toBe(false)
+    expect(replay.wake).toEqual(first.wake)
+    // A different dueAt does not rewrite the claimed row either.
+    const rescheduled = await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 9_000 })
+    expect(rescheduled.created).toBe(false)
+    expect(rescheduled.wake).toEqual(first.wake)
+    expect(await store.readSupervisorWake(GRAPH, SCHEDULE.wakeId)).toEqual(first.wake)
+    await store.close()
+  })
+
+  it('schedules a one-shot without recurMs and validates the scheduling payload', async () => {
+    const store = await openStore(await freshPath())
+    const oneShot = await store.scheduleSupervisorWake({ ...SCHEDULE, dueAt: 5_000 })
+    expect(oneShot.created).toBe(true)
+    expect(oneShot.wake.recurMs).toBeUndefined()
+    await expect(
+      store.scheduleSupervisorWake({ ...SCHEDULE, wakeId: 'graph_wake_bad', dueAt: Number.NaN }),
+    ).rejects.toMatchObject({ code: 'malformed-state' })
+    await expect(
+      store.scheduleSupervisorWake({ ...SCHEDULE, wakeId: 'graph_wake_bad', dueAt: 5_000, recurMs: 0 }),
+    ).rejects.toMatchObject({ code: 'malformed-state' })
+    await store.close()
+  })
+
+  it('passes the scheduling conformance checks and reports a misbehaving store', async () => {
+    const store = await openStore(await freshPath())
+    expect(await scheduleSupervisorWakeConformanceChecks(store)).toEqual([
+      { check: 'schedule-round-trip', ok: true },
+      { check: 'schedule-replay-idempotent', ok: true },
+    ])
+    await store.close()
+
+    // A store that refuses to create is caught by the round-trip check.
+    const refused = await scheduleSupervisorWakeConformanceChecks({
+      scheduleSupervisorWake: () => Promise.resolve({ wake: conformanceRow(), created: false }),
+      readSupervisorWake: () => Promise.resolve(undefined),
+      snapshot: () => Promise.resolve(emptySnapshot()),
+    })
+    expect(refused.find(result => result.check === 'schedule-round-trip')?.detail).toContain('first schedule must create')
+
+    // A store that drops the schedule fields is caught by read and snapshot.
+    const dropped = await scheduleSupervisorWakeConformanceChecks({
+      scheduleSupervisorWake: request => Promise.resolve({
+        wake: conformanceRow(request.recurMs === undefined ? { wakeId: request.wakeId, recurMs: 60_000 } : { wakeId: request.wakeId }),
+        created: true,
+      }),
+      readSupervisorWake: () => Promise.resolve(undefined),
+      snapshot: () => Promise.resolve(emptySnapshot()),
+    })
+    const roundTrip = dropped.find(result => result.check === 'schedule-round-trip')
+    expect(roundTrip?.ok).toBe(false)
+    expect(roundTrip?.detail).toContain('dueAt must round-trip')
+    expect(roundTrip?.detail).toContain('recurMs must round-trip')
+    expect(roundTrip?.detail).toContain('readSupervisorWake must return the scheduled row unchanged')
+    expect(roundTrip?.detail).toContain('snapshot() must include the scheduled row')
+    expect(roundTrip?.detail).toContain('no recurrence')
+
+    // A store that rewrites rows on replay is caught by the idempotency check.
+    const replays = new Map<string, number>()
+    const rewritten = await scheduleSupervisorWakeConformanceChecks({
+      scheduleSupervisorWake: (request) => {
+        const call = (replays.get(request.wakeId) ?? 0) + 1
+        replays.set(request.wakeId, call)
+        if (call === 1) {
+          return Promise.resolve({
+            wake: conformanceRow({
+              wakeId: request.wakeId,
+              dueAt: request.dueAt,
+              ...(request.recurMs === undefined ? {} : { recurMs: request.recurMs }),
+            }),
+            created: true,
+          })
+        }
+        if (call === 2) return Promise.resolve({ wake: conformanceRow({ wakeId: request.wakeId, dueAt: 9_999 }), created: false })
+        return Promise.resolve({ wake: conformanceRow({ wakeId: request.wakeId, dueAt: request.dueAt }), created: true })
+      },
+      readSupervisorWake: () => Promise.resolve(undefined),
+      snapshot: () => Promise.resolve(emptySnapshot()),
+    })
+    const replay = rewritten.find(result => result.check === 'schedule-replay-idempotent')
+    expect(replay?.ok).toBe(false)
+    expect(replay?.detail).toContain('must return the row unchanged')
+    expect(replay?.detail).toContain('must not rewrite')
   })
 })
 

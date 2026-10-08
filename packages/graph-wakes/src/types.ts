@@ -12,6 +12,7 @@ import type {
   AgentGraphSupervisorWakeRecord,
   BeginAgentGraphSupervisorWakeAttemptRequest,
   CompleteAgentGraphSupervisorWakeAttemptRequest,
+  ScheduleAgentGraphSupervisorWakeRequest,
   SupersedeAgentGraphSupervisorWakesRequest,
 } from '@hy-sde-org/dsh-graph-control'
 
@@ -72,6 +73,15 @@ export interface GraphWakeStore {
    * already exhausted).
    */
   exhaustSupervisorWake(graphId: string, wakeId: string, reason: string): Promise<AgentGraphSupervisorWakeRecord>
+  /**
+   * Claim-style exactly-once upsert of a scheduled wake (see
+   * {@link ScheduleAgentGraphSupervisorWakeRequest}); the runtime uses it to
+   * persist the next occurrence of a delivered recurring wake.
+   */
+  scheduleSupervisorWake(request: ScheduleAgentGraphSupervisorWakeRequest): Promise<{
+    wake: AgentGraphSupervisorWakeRecord
+    created: boolean
+  }>
   supersedeSupervisorWakes(request: SupersedeAgentGraphSupervisorWakesRequest): Promise<number>
   listScheduleUpdates(graphId: string): Promise<AgentGraphScheduleUpdate[]>
   snapshot(): Promise<AgentGraphControlSnapshot>

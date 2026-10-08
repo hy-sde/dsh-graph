@@ -212,6 +212,17 @@ export interface AgentGraphSupervisorWakeRecord {
   readonly supersededReason?: string
   /** Terminal exhaustion reason, present only when the wake ended in `exhausted`. */
   readonly failureReason?: string
+  /**
+   * Epoch ms when the wake becomes due for delivery; `undefined` means
+   * immediately due (claim-style rows keep today's behavior).
+   */
+  readonly dueAt?: number
+  /**
+   * Recurrence interval in ms. After a wake with `recurMs` is delivered, the
+   * wake runtime schedules the next occurrence under the deterministic
+   * `${baseWakeId}#occurrence-${n}` id scheme (occurrence 0 is the base id).
+   */
+  readonly recurMs?: number
 }
 
 export interface AgentGraphSupervisorWakeAttemptRecord {
@@ -230,6 +241,18 @@ export interface ClaimAgentGraphSupervisorWakeRequest {
   readonly wakeId: string
   readonly snapshotVersion: string
   readonly rootSessionId: string
+}
+
+/** Schedule a supervisor wake that becomes due at `dueAt` (and recurs every `recurMs`). */
+export interface ScheduleAgentGraphSupervisorWakeRequest {
+  readonly graphId: string
+  readonly wakeId: string
+  readonly snapshotVersion: string
+  readonly rootSessionId: string
+  /** Epoch ms when the wake becomes due; the wake runtime withholds delivery until then. */
+  readonly dueAt: number
+  /** Recurrence interval in ms; omitted means the wake is a one-shot. */
+  readonly recurMs?: number
 }
 
 export interface BeginAgentGraphSupervisorWakeAttemptRequest {

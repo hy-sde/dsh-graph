@@ -37,13 +37,28 @@ const { claim } = await store.claimIntentAtScheduleRevision(claimRequest, update
 
 每个进程只打开该单元一次：存储层拒绝重复打开，且本存储是该单元上的唯一写链。
 
+```ts
+import type { ScheduleAgentGraphSupervisorWakeRequest } from '@hy-sde-org/dsh-graph-control'
+
+// A future or recurring wake: durable, exactly-once per wakeId.
+const driftSweep: ScheduleAgentGraphSupervisorWakeRequest = {
+  graphId: 'graph_g1',
+  wakeId: 'graph_wake_drift_sweep', // recurring chains: `${wakeId}#occurrence-1`, -2, …
+  snapshotVersion: 'rev-3',
+  rootSessionId: 'session-root',
+  dueAt: Date.now() + 60_000, // epoch ms; undefined = immediately due
+  recurMs: 60_000, // optional: the runtime schedules the next occurrence after each delivery
+}
+// Hand `driftSweep` to the durable store's scheduleSupervisorWake.
+```
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
 - **调度日志**（`schedule`）：只追加决策，修订号 = max+1，按 `updateId` 与源三元组 `(session, run, toolCall)` 幂等；`finish` 不能与 `add_work` 合并；一旦提交 finish，图即关闭。
 - **意图声明**（`claims`）：键为 `graphId:intentId`，激活身份唯一性（`(targetSessionId, targetTurnId)` 与 `(targetSessionId, targetRunId)`）由派生索引约束；`claimed → executing → cancelled` 转换以修订号为条件；关闭后拒绝新声明，但既有声明仍可派发。
 - **操作员预置**（`provisions`）：确定性 `provisionId`/`operatorId` 使重试采用同一操作员；与声明一样受修订号约束并在关闭后拦截。
-- **主管唤醒**（`wakes` + `wake_attempts`）：声明一次后开始尝试（已投递/已替代/已耗尽则拒绝，且在可选的持久化 `maxAttempts` 上限处也拒绝——该上限同时校验为正安全整数）；以 `waiting_permission | delivered | superseded | retryable_failed` 完成；用 `exhaustSupervisorWake` 将可重试唤醒持久化耗尽（幂等，原因限制为 4000 字符，`exhausted` 为终态且不受替代影响）；按根会话（可选图过滤）替代；`recoverSupervisorWakes()` 刻意为空操作——中断的尝试是否真正完成属于运行时事实，协调器检查运行事实后完成之。本存储从不猜测。
+- **主管唤醒**（`wakes` + `wake_attempts`）：声明一次后开始尝试（已投递/已替代/已耗尽则拒绝，且在可选的持久化 `maxAttempts` 上限处也拒绝——该上限同时校验为正安全整数）；以 `waiting_permission | delivered | superseded | retryable_failed` 完成；用 `exhaustSupervisorWake` 将可重试唤醒持久化耗尽（幂等，原因限制为 4000 字符，`exhausted` 为终态且不受替代影响）；按根会话（可选图过滤）替代；`recoverSupervisorWakes()` 刻意为空操作——中断的尝试是否真正完成属于运行时事实，协调器检查运行事实后完成之。本存储从不猜测。唤醒还可以**调度**：`scheduleSupervisorWake` 是声明式的 exactly-once upsert，持久化 epoch 毫秒的 `dueAt`（到期前不投递）与可选的 `recurMs`（唤醒运行时用它在 `${baseWakeId}#occurrence-${n}` 下链接出现）——两者都是持久化的唤醒行字段，且一致性套件（`graphControlStoreConformanceChecks`）会对任何声称该契约的存储验证 `dueAt` 往返与重放幂等。
 
 <a id="further-exploration"></a>
 ## 进一步探索

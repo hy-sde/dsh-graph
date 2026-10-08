@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Config, SqliteStorageBackend } from '@deepseek-ai/dsh-storage-sqlite'
 import { GraphControlStore, graphWakeAttemptId, graphWakeId } from '@hy-sde-org/dsh-graph-control'
 import type { AgentGraphSupervisorWakeRecord } from '@hy-sde-org/dsh-graph-control'
-import { GraphWakeRuntime } from '../src/runtime.ts'
+import { GraphWakeRuntime, nextWakeOccurrenceId } from '../src/runtime.ts'
 import type {
   GraphWakeDeliver,
   GraphWakeDeliveryOutcome,
@@ -475,5 +475,144 @@ describe('GraphWakeRuntime', () => {
     clock.advance(30_000)
     await runtime.handleIdle(ROOT)
     expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).attemptCount).toBe(2)
+  })
+})
+
+/* ----------------------- scheduled + recurring wakes ------------------- */
+
+describe('scheduled and recurring wakes', () => {
+  const RECUR_MS = 60_000
+
+  async function scheduleWake(
+    store: GraphControlStore,
+    overrides: Partial<{
+      graphId: string
+      wakeId: string
+      snapshotVersion: string
+      rootSessionId: string
+      dueAt: number
+      recurMs: number
+    }> = {},
+  ): Promise<AgentGraphSupervisorWakeRecord> {
+    const graphId = overrides.graphId ?? GRAPH
+    const snapshotVersion = overrides.snapshotVersion ?? SNAPSHOT
+    const wakeId = overrides.wakeId ?? graphWakeId(graphId, snapshotVersion)
+    const rootSessionId = overrides.rootSessionId ?? ROOT
+    const { wake } = await store.scheduleSupervisorWake({
+      graphId,
+      wakeId,
+      snapshotVersion,
+      rootSessionId,
+      dueAt: overrides.dueAt ?? 0,
+      ...(overrides.recurMs !== undefined ? { recurMs: overrides.recurMs } : {}),
+    })
+    return wake
+  }
+
+  it('derives occurrence ids from the chain position alone', () => {
+    expect(nextWakeOccurrenceId(WAKE_ID)).toBe(`${WAKE_ID}#occurrence-1`)
+    expect(nextWakeOccurrenceId(`${WAKE_ID}#occurrence-1`)).toBe(`${WAKE_ID}#occurrence-2`)
+    expect(nextWakeOccurrenceId(`${WAKE_ID}#occurrence-9`)).toBe(`${WAKE_ID}#occurrence-10`)
+  })
+
+  it('withholds a future-due wake from the sweep without gaining an attempt', async () => {
+    const store = await openStore(tmpPath())
+    const clock = makeClock()
+    await scheduleWake(store, { dueAt: clock.now() + RECUR_MS })
+    const { deliver, calls } = makeDeliver()
+    const runtime = makeRuntime(store, deliver, { now: clock.now })
+
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(0)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID))).toMatchObject({ status: 'pending', attemptCount: 0 })
+    expect(await store.listSupervisorWakeAttempts(GRAPH, WAKE_ID)).toHaveLength(0)
+    // pendingWakes stays the unsettled listing; the sweep is what gates on due time.
+    expect(await runtime.pendingWakes()).toHaveLength(1)
+
+    clock.advance(RECUR_MS)
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(1)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('delivered')
+  })
+
+  it('delivers an overdue scheduled wake exactly like an unscheduled one', async () => {
+    const store = await openStore(tmpPath())
+    await scheduleWake(store, { dueAt: 0 })
+    const { deliver, calls } = makeDeliver()
+    const runtime = makeRuntime(store, deliver, { now: () => 0 })
+
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(1)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('delivered')
+  })
+
+  it('chains recurring wakes through deterministic occurrence ids across restarts', async () => {
+    const store = await openStore(tmpPath())
+    const clock = makeClock()
+    await scheduleWake(store, { dueAt: 0, recurMs: RECUR_MS })
+    const { deliver, calls } = makeDeliver()
+    const runtime = makeRuntime(store, deliver, { now: clock.now })
+
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.wakeId).toBe(WAKE_ID)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('delivered')
+    expect(await store.readSupervisorWake(GRAPH, `${WAKE_ID}#occurrence-1`)).toMatchObject({
+      status: 'pending',
+      attemptCount: 0,
+      dueAt: clock.now() + RECUR_MS,
+      recurMs: RECUR_MS,
+    })
+
+    // A fresh runtime over the same store resumes the chain (restart durability).
+    const fresh = makeRuntime(store, deliver, { now: clock.now })
+    clock.advance(RECUR_MS)
+    await fresh.handleIdle(ROOT)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.wakeId).toBe(`${WAKE_ID}#occurrence-1`)
+    expect(must(await store.readSupervisorWake(GRAPH, `${WAKE_ID}#occurrence-1`)).status).toBe('delivered')
+    expect(await store.readSupervisorWake(GRAPH, `${WAKE_ID}#occurrence-2`)).toMatchObject({
+      status: 'pending',
+      dueAt: clock.now() + RECUR_MS,
+      recurMs: RECUR_MS,
+    })
+    expect(await store.listSupervisorWakeAttempts(GRAPH, WAKE_ID)).toHaveLength(1)
+    expect(await store.listSupervisorWakeAttempts(GRAPH, `${WAKE_ID}#occurrence-1`)).toHaveLength(1)
+  })
+
+  it('schedules no next occurrence when the graph is stopped or closed', async () => {
+    const store = await openStore(tmpPath())
+    await scheduleWake(store, { dueAt: 0, recurMs: RECUR_MS })
+    await store.commitScheduleUpdate(updateRequest({ finish: { resultIds: ['record-1'], reason: 'done' } }))
+    const { deliver, calls } = makeDeliver()
+    const runtime = makeRuntime(store, deliver, { now: () => 0 })
+
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(0)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('superseded')
+    expect((await store.snapshot()).supervisorWakes.map(wake => wake.wakeId)).toEqual([WAKE_ID])
+  })
+
+  it('schedules no next occurrence when the deliver hook reports stopped', async () => {
+    const store = await openStore(tmpPath())
+    await scheduleWake(store, { dueAt: 0, recurMs: RECUR_MS })
+    const { deliver } = makeDeliver([{ kind: 'stopped' }])
+    const runtime = makeRuntime(store, deliver, { now: () => 0 })
+
+    await runtime.handleIdle(ROOT)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('superseded')
+    expect((await store.snapshot()).supervisorWakes).toHaveLength(1)
+  })
+
+  it('schedules no next occurrence for a retryable failure — only delivery recurs', async () => {
+    const store = await openStore(tmpPath())
+    await scheduleWake(store, { dueAt: 0, recurMs: RECUR_MS })
+    const { deliver, calls } = makeDeliver([{ kind: 'retryable_failed', failureReason: 'boom' }])
+    const runtime = makeRuntime(store, deliver, { now: () => 0 })
+
+    await runtime.handleIdle(ROOT)
+    expect(calls).toHaveLength(1)
+    expect(must(await store.readSupervisorWake(GRAPH, WAKE_ID)).status).toBe('retryable_failed')
+    expect((await store.snapshot()).supervisorWakes).toHaveLength(1)
   })
 })

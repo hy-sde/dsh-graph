@@ -36,12 +36,27 @@ const { claim } = await store.claimIntentAtScheduleRevision(claimRequest, update
 
 Open the unit exactly once per process: the storage layer rejects double-open, and the store is the single writer chain over the unit.
 
+```ts
+import type { ScheduleAgentGraphSupervisorWakeRequest } from '@hy-sde-org/dsh-graph-control'
+
+// A future or recurring wake: durable, exactly-once per wakeId.
+const driftSweep: ScheduleAgentGraphSupervisorWakeRequest = {
+  graphId: 'graph_g1',
+  wakeId: 'graph_wake_drift_sweep', // recurring chains: `${wakeId}#occurrence-1`, -2, …
+  snapshotVersion: 'rev-3',
+  rootSessionId: 'session-root',
+  dueAt: Date.now() + 60_000, // epoch ms; undefined = immediately due
+  recurMs: 60_000, // optional: the runtime schedules the next occurrence after each delivery
+}
+// Hand `driftSweep` to the durable store's scheduleSupervisorWake.
+```
+
 ## Understand the implementation
 
 - **Schedule log** (`schedule`): append-only decisions, revision = max+1, idempotent by `updateId` and by source triple `(session, run, toolCall)`; `finish` cannot combine with `add_work`; the graph is closed once a finish is committed.
 - **Intent claims** (`claims`): keyed `graphId:intentId`, with activation-identity uniqueness (`(targetSessionId, targetTurnId)` and `(targetSessionId, targetRunId)`) enforced against derived indexes; transitions `claimed → executing → cancelled` are revision-conditional; fresh claims are rejected after closure while existing claims stay dispatchable.
 - **Operator provisions** (`provisions`): deterministic `provisionId`/`operatorId` make retries adopt the same operator; revision-conditional and closure-blocked like claims.
-- **Supervisor wakes** (`wakes` + `wake_attempts`): claim once, begin attempts (refused once delivered/superseded/exhausted, and at an optional durable `maxAttempts` ceiling, which also validates as a positive safe integer), complete with `waiting_permission | delivered | superseded | retryable_failed`; exhaust a retryable wake durably with `exhaustSupervisorWake` (idempotent, reason bounded to 4000 chars, `exhausted` is terminal and untouched by supersede); supersede by root session (+ optional graph filter); `recoverSupervisorWakes()` is deliberately a no-op — whether an interrupted attempt really completed is a Runtime fact, so the coordinator inspects run facts and completes accordingly. The store never guesses.
+- **Supervisor wakes** (`wakes` + `wake_attempts`): claim once, begin attempts (refused once delivered/superseded/exhausted, and at an optional durable `maxAttempts` ceiling, which also validates as a positive safe integer), complete with `waiting_permission | delivered | superseded | retryable_failed`; exhaust a retryable wake durably with `exhaustSupervisorWake` (idempotent, reason bounded to 4000 chars, `exhausted` is terminal and untouched by supersede); supersede by root session (+ optional graph filter); `recoverSupervisorWakes()` is deliberately a no-op — whether an interrupted attempt really completed is a Runtime fact, so the coordinator inspects run facts and completes accordingly. The store never guesses. Wakes may also be **scheduled**: `scheduleSupervisorWake` is a claim-style exactly-once upsert that persists an epoch-ms `dueAt` (delivery withheld until then) and an optional `recurMs` the wake runtime uses to chain occurrences under `${baseWakeId}#occurrence-${n}` — both fields are durable wake-row columns, and a conformance suite (`graphControlStoreConformanceChecks`) verifies the `dueAt` round-trip and replay idempotency against any store claiming the contract.
 
 ## Further Exploration
 
