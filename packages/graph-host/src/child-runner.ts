@@ -13,7 +13,7 @@ import type {
   GraphOperatorChildRunner,
   GraphOperatorChildStartInput,
 } from '@hy-sde-org/dsh-graph-executor'
-import type { SubagentRun, SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+import type { SubagentActivation, SubagentStopReason } from '@deepseek-ai/dsh-subagent'
 import type { GraphHostSubagents } from './types.ts'
 import { GraphRunIdentityLedger } from './records.ts'
 
@@ -32,7 +32,7 @@ interface GraphHostChildRunnerDeps {
  * `claim.targetRunId` into both the start input and the emitted event).
  */
 export class GraphHostChildRunner implements GraphOperatorChildRunner {
-  private readonly runs = new Map<string, SubagentRun>()
+  private readonly runs = new Map<string, SubagentActivation>()
 
   constructor(private readonly deps: GraphHostChildRunnerDeps) {}
 
@@ -49,7 +49,7 @@ export class GraphHostChildRunner implements GraphOperatorChildRunner {
       prompt: [{ type: 'text', text: input.instructions }],
       parent,
       signal: input.abortSignal ?? new AbortController().signal,
-      ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
+      ...(input.workspace !== undefined ? { cwd: input.workspace } : {}),
     })
     this.runs.set(input.sessionId, run)
     if (input.runId !== undefined) {
