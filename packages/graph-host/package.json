@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-graph-host",
   "description": "Agent Graph host assembly: wires the Agent Graph packages to real harness services (storage, subagents, worktrees, compaction, idle) and provides the agentGraphController service the supervisor tools consume.",
-  "version": "0.2.1-alpha.2",
+  "version": "0.2.1-alpha.4",
   "publishConfig": {
     "access": "public"
   },

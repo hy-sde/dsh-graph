@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-tool-graph",
   "description": "Agent Graph supervisor tools: view_agent_graph, update_agent_graph, yield_agent_graph over a host-provided graph controller, with the orchestration:graph prompt section.",
-  "version": "0.2.1-alpha.2",
+  "version": "0.2.1-alpha.4",
   "publishConfig": {
     "access": "public"
   },
