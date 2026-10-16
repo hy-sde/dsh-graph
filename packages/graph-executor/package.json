@@ -31,10 +31,10 @@
     "@hy-sde-org/dsh-graph-stream": "workspace:^"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-storage": "^0.2.1-alpha.4",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-alpha.4",
     "@hy-sde-org/dsh-graph-control": "workspace:*",
     "@hy-sde-org/dsh-graph-stream": "workspace:*",
-    "@deepseek-ai/dsh-storage": "^0.2.1-alpha.2",
-    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-alpha.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"

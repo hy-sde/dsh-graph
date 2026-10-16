@@ -30,11 +30,11 @@
     "@hy-sde-org/dsh-graph-control": "workspace:^"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-alpha.4",
     "@hy-sde-org/dsh-graph-control": "workspace:*",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7",
-    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-alpha.2"
+    "vitest": "^3.2.7"
   },
   "scripts": {
     "clean": "rm -rf dist",
