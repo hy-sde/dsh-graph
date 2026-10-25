@@ -1,7 +1,7 @@
 {
   "name": "@hy-sde-org/dsh-graph-wakes",
   "description": "Agent Graph supervisor wake delivery: idle-gated host runtime over the durable wake rows.",
-  "version": "0.2.1-alpha.4",
+  "version": "0.2.1-rc.3",
   "publishConfig": {
     "access": "public"
   },
@@ -27,12 +27,12 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5-alpha.2",
+    "@deepseek-ai/cordis": "~4.0.5",
     "@hy-sde-org/dsh-graph-control": "workspace:^"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5-alpha.2",
-    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-alpha.4",
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-storage-sqlite": "^0.2.1-rc.3",
     "@hy-sde-org/dsh-graph-control": "workspace:*",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
