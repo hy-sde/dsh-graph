@@ -115,7 +115,7 @@ describe('graph projection unit', () => {
     publish(session, 'g-main', 1)
     // Stale re-publish: the cell keeps its exact state object (the registry's Object.is gate).
     expect(ctx.sessionProjections.stateOf(session, 'graph')).toBe(before)
-    expect(ctx.sessionProjections.stateOf(session, 'graph')?.asOfSeq).toBe(first.event.seq)
+    expect((ctx.sessionProjections.stateOf(session, 'graph') as SessionGraphProjectionState | undefined)?.asOfSeq).toBe(first.event.seq)
     expect(pushes).toEqual([])
     const next = publish(session, 'g-main', 2)
     expect(graphOf(ctx, session)).toEqual(next.snapshot)
@@ -131,7 +131,7 @@ describe('graph projection unit', () => {
     const standing = publish(session, 'g-main', 3)
     expect(pushes).toEqual([standing.event.seq])
     const foreign = publish(session, 'g-other', 1)
-    expect(ctx.sessionProjections.stateOf(session, 'graph')?.asOfSeq).toBe(foreign.event.seq)
+    expect((ctx.sessionProjections.stateOf(session, 'graph') as SessionGraphProjectionState | undefined)?.asOfSeq).toBe(foreign.event.seq)
     // The kept snapshot reference crosses the view identity gate: no push.
     expect(graphOf(ctx, session)).toEqual(standing.snapshot)
     expect(pushes).toEqual([standing.event.seq])
@@ -143,11 +143,11 @@ describe('graph projection unit', () => {
 
   it('shares one registration across duplicate keys and rejects a version change', async () => {
     const { ctx } = await harness(true)
-    expect(() => ctx.sessionProjections.register(graphProjectionDefinition)).not.toThrow()
-    expect(() => ctx.sessionProjections.register({
+    await expect(Promise.resolve(ctx.sessionProjections.register(graphProjectionDefinition))).resolves.toBeDefined()
+    await expect(Promise.resolve(ctx.sessionProjections.register({
       ...graphProjectionDefinition,
       stateVersion: 9,
-    })).toThrow(/already registered at stateVersion 1; refusing to share it with stateVersion 9/)
+    }))).rejects.toThrow(/already registered at stateVersion 1; refusing to share it with stateVersion 9/)
   })
 
   it('removes the key when the mounting fiber unloads (HMR safety)', async () => {
@@ -239,7 +239,7 @@ describe('graph projection unit', () => {
     publish(session, 'g-main', 2)
     await ctx.plugin(GraphProjectionPlugin)
     expect(graphOf(ctx, session)?.revision).toBe(2)
-    expect(ctx.sessionProjections.stateOf(session, 'graph')?.asOfSeq).toBe(session.seq - 1)
+    expect((ctx.sessionProjections.stateOf(session, 'graph') as SessionGraphProjectionState | undefined)?.asOfSeq).toBe(session.seq - 1)
   })
 
   it('graphSnapshotToEvent returns the exact graph/change payload', () => {

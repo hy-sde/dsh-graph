@@ -22,7 +22,7 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
-import type { } from '@deepseek-ai/dsh-agent'
+import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { } from '@deepseek-ai/dsh-session-projection'
 import {
   ToolArgsError,
@@ -161,7 +161,10 @@ function callIdentityOf(exec: ToolRunContext, ctx: Context): ToolCallIdentity {
       'agent graph tools require an agent-bound caller',
     )
   }
-  const lastTurn = ctx.sessionProjections.stateOf(agent.session, 'turnBoundary')?.lastTurn ?? 0
+  // 0.2.2 deprecated the 2-arg stateOf(session, key) (returns unknown); the turn boundary
+  // lives on the agent registry projection.
+  const agents: AgentRegistry | undefined = ctx.get('agents')
+  const lastTurn = agents?.turnBoundaryOf(agent.session).lastTurn ?? 0
   return {
     sessionId: String(agent.session.id),
     runId: `graph_run_${String(lastTurn)}`,

@@ -17,6 +17,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { Session, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
@@ -540,6 +541,7 @@ describe('plugin composition', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjectionRegistry)
     ctx.provide('agentGraphController', fixture.controller)
     await ctx.plugin(toolGraphPackage, {})
@@ -552,12 +554,10 @@ describe('plugin composition', () => {
     })
     const agent = { session } as never
     const result = await ctx.tools.execute({
+      calls: [{ type: 'tool-call' as const, id: ToolCallId('call-composed'), name: 'view_agent_graph', arguments: JSON.stringify({ graphId: GRAPH }) }],
       signal: new AbortController().signal,
-      callId: ToolCallId('call-composed'),
-      name: 'view_agent_graph',
-      arguments: { graphId: GRAPH },
       agent,
-    })
+    }).then(b => b.results[0]!.result)
     expect(result.isError).toBe(false)
     expect(result.value).toEqual(expect.objectContaining({ graphId: GRAPH, revision: 0 }))
     await ctx.fiber.dispose()
@@ -571,6 +571,7 @@ describe('plugin composition', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(toolGraphPackage, {})
     const sessionId = brandString<SessionId>(ROOT)
@@ -582,12 +583,10 @@ describe('plugin composition', () => {
     })
     const agent = { session } as never
     const result = await ctx.tools.execute({
+      calls: [{ type: 'tool-call' as const, id: ToolCallId('call-no-host'), name: 'view_agent_graph', arguments: JSON.stringify({ graphId: GRAPH }) }],
       signal: new AbortController().signal,
-      callId: ToolCallId('call-no-host'),
-      name: 'view_agent_graph',
-      arguments: { graphId: GRAPH },
       agent,
-    })
+    }).then(b => b.results[0]!.result)
     expect(result.isError).toBe(true)
     expect(result.error?.message).toContain('[agent-graph-unavailable]')
     await ctx.fiber.dispose()
@@ -598,6 +597,7 @@ describe('plugin composition', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjectionRegistry)
     ctx.provide('agentGraphController', fixture.controller)
     await ctx.plugin(toolGraphPackage, {})
@@ -610,12 +610,10 @@ describe('plugin composition', () => {
     })
     const agent = { session } as never
     const result = await ctx.tools.execute({
+      calls: [{ type: 'tool-call' as const, id: ToolCallId('call-other'), name: 'view_agent_graph', arguments: JSON.stringify({ graphId: GRAPH }) }],
       signal: new AbortController().signal,
-      callId: ToolCallId('call-other'),
-      name: 'view_agent_graph',
-      arguments: { graphId: GRAPH },
       agent,
-    })
+    }).then(b => b.results[0]!.result)
     expect(result.isError).toBe(true)
     expect(result.error?.message).toContain('[not_root_session]')
     await ctx.fiber.dispose()
